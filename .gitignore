@@ -1,6 +1,33 @@
+# Dependências
 node_modules/
+
+# Variáveis de ambiente
 .env
 .env.*
+!.env.example
+
+# Builds e cobertura
 dist/
 build/
 coverage/
+
+# Prisma Client gerado
+backend/src/generated/prisma/
+
+# Ferramentas/agentes locais
+backend/.agents/
+backend/.claude/
+backend/.windsurf/
+backend/skills-lock.json
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / sistema operacional
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Arquivos temporários
+*.tmp
