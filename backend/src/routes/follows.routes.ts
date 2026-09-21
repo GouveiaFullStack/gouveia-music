@@ -4,6 +4,7 @@
 
 import { Router } from "express";
 
+import { authMiddleware } from "../middlewares/auth.middleware.js";
 import { prisma } from "../lib/prisma.js";
 import { Prisma } from "../generated/prisma/client.js";
 
@@ -19,7 +20,10 @@ const router = Router();
 
 // ------------------------------------------------------
 // GET /users/:id/following/artists
+//
 // Lista os artistas seguidos por um usuário.
+//
+// Rota pública.
 // ------------------------------------------------------
 
 router.get("/users/:id/following/artists", async (request, response) => {
@@ -74,7 +78,10 @@ router.get("/users/:id/following/artists", async (request, response) => {
 
 // ------------------------------------------------------
 // GET /artists/:id/followers
+//
 // Lista os usuários que seguem um artista.
+//
+// Rota pública.
 // ------------------------------------------------------
 
 router.get("/artists/:id/followers", async (request, response) => {
@@ -137,15 +144,26 @@ router.get("/artists/:id/followers", async (request, response) => {
 
 // ------------------------------------------------------
 // POST /users/:userId/following/artists/:artistId
+//
 // Usuário começa a seguir um artista.
+//
+// Rota protegida.
+//
+// O usuário autenticado só pode seguir artistas
+// através da própria conta.
 // ------------------------------------------------------
 
 router.post(
   "/users/:userId/following/artists/:artistId",
+  authMiddleware,
   async (request, response) => {
     try {
       const userId = Number(request.params.userId);
       const artistId = Number(request.params.artistId);
+
+      // ------------------------------------------------
+      // Validação do usuário
+      // ------------------------------------------------
 
       if (!Number.isInteger(userId) || userId <= 0) {
         response.status(400).json({
@@ -155,6 +173,25 @@ router.post(
         return;
       }
 
+      // ------------------------------------------------
+      // Autorização
+      // ------------------------------------------------
+
+      const authenticatedUserId = request.userId!;
+
+      if (authenticatedUserId !== userId) {
+        response.status(403).json({
+          message:
+            "Você não tem permissão para seguir artistas por este usuário",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Validação do artista
+      // ------------------------------------------------
+
       if (!Number.isInteger(artistId) || artistId <= 0) {
         response.status(400).json({
           message: "ID de artista inválido",
@@ -163,7 +200,10 @@ router.post(
         return;
       }
 
-      // Confirma se o usuário existe.
+      // ------------------------------------------------
+      // Confirma se o usuário existe
+      // ------------------------------------------------
+
       const user = await prisma.user.findUnique({
         where: {
           id: userId,
@@ -178,7 +218,10 @@ router.post(
         return;
       }
 
-      // Confirma se o artista existe.
+      // ------------------------------------------------
+      // Confirma se o artista existe
+      // ------------------------------------------------
+
       const artist = await prisma.artist.findUnique({
         where: {
           id: artistId,
@@ -192,6 +235,10 @@ router.post(
 
         return;
       }
+
+      // ------------------------------------------------
+      // Cria o follow
+      // ------------------------------------------------
 
       const follow = await prisma.userArtistFollow.create({
         data: {
@@ -207,8 +254,10 @@ router.post(
       response.status(201).json(follow);
     } catch (error) {
       // userId + artistId formam a chave da relação.
-      // Portanto, o usuário não pode seguir o mesmo
-      // artista duas vezes.
+      //
+      // Portanto, o usuário não pode seguir
+      // o mesmo artista duas vezes.
+
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === "P2002"
@@ -231,15 +280,23 @@ router.post(
 
 // ------------------------------------------------------
 // DELETE /users/:userId/following/artists/:artistId
+//
 // Usuário deixa de seguir um artista.
+//
+// Rota protegida.
 // ------------------------------------------------------
 
 router.delete(
   "/users/:userId/following/artists/:artistId",
+  authMiddleware,
   async (request, response) => {
     try {
       const userId = Number(request.params.userId);
       const artistId = Number(request.params.artistId);
+
+      // ------------------------------------------------
+      // Validação dos IDs
+      // ------------------------------------------------
 
       if (
         !Number.isInteger(userId) ||
@@ -253,6 +310,25 @@ router.delete(
 
         return;
       }
+
+      // ------------------------------------------------
+      // Autorização
+      // ------------------------------------------------
+
+      const authenticatedUserId = request.userId!;
+
+      if (authenticatedUserId !== userId) {
+        response.status(403).json({
+          message:
+            "Você não tem permissão para deixar de seguir artistas por este usuário",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Procura a relação
+      // ------------------------------------------------
 
       const follow = await prisma.userArtistFollow.findUnique({
         where: {
@@ -270,6 +346,10 @@ router.delete(
 
         return;
       }
+
+      // ------------------------------------------------
+      // Remove o follow
+      // ------------------------------------------------
 
       await prisma.userArtistFollow.delete({
         where: {
@@ -297,7 +377,10 @@ router.delete(
 
 // ------------------------------------------------------
 // GET /users/:id/following/users
+//
 // Lista os usuários que este usuário segue.
+//
+// Rota pública.
 // ------------------------------------------------------
 
 router.get("/users/:id/following/users", async (request, response) => {
@@ -360,7 +443,10 @@ router.get("/users/:id/following/users", async (request, response) => {
 
 // ------------------------------------------------------
 // GET /users/:id/followers
+//
 // Lista quem segue determinado usuário.
+//
+// Rota pública.
 // ------------------------------------------------------
 
 router.get("/users/:id/followers", async (request, response) => {
@@ -423,15 +509,25 @@ router.get("/users/:id/followers", async (request, response) => {
 
 // ------------------------------------------------------
 // POST /users/:followerId/following/users/:followingId
+//
 // Um usuário começa a seguir outro usuário.
+//
+// Rota protegida.
+//
+// followerId deve ser o mesmo usuário autenticado.
 // ------------------------------------------------------
 
 router.post(
   "/users/:followerId/following/users/:followingId",
+  authMiddleware,
   async (request, response) => {
     try {
       const followerId = Number(request.params.followerId);
       const followingId = Number(request.params.followingId);
+
+      // ------------------------------------------------
+      // Validação dos IDs
+      // ------------------------------------------------
 
       if (
         !Number.isInteger(followerId) ||
@@ -446,7 +542,24 @@ router.post(
         return;
       }
 
-      // Um usuário não pode seguir a si mesmo.
+      // ------------------------------------------------
+      // Autorização
+      // ------------------------------------------------
+
+      const authenticatedUserId = request.userId!;
+
+      if (authenticatedUserId !== followerId) {
+        response.status(403).json({
+          message: "Você não tem permissão para seguir usuários por esta conta",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Impede seguir a si mesmo
+      // ------------------------------------------------
+
       if (followerId === followingId) {
         response.status(400).json({
           message: "Um usuário não pode seguir a si mesmo",
@@ -455,7 +568,10 @@ router.post(
         return;
       }
 
-      // Confirma se quem está seguindo existe.
+      // ------------------------------------------------
+      // Confirma se quem está seguindo existe
+      // ------------------------------------------------
+
       const follower = await prisma.user.findUnique({
         where: {
           id: followerId,
@@ -470,7 +586,10 @@ router.post(
         return;
       }
 
-      // Confirma se o usuário que será seguido existe.
+      // ------------------------------------------------
+      // Confirma se o usuário seguido existe
+      // ------------------------------------------------
+
       const following = await prisma.user.findUnique({
         where: {
           id: followingId,
@@ -484,6 +603,10 @@ router.post(
 
         return;
       }
+
+      // ------------------------------------------------
+      // Cria o follow
+      // ------------------------------------------------
 
       const follow = await prisma.userFollow.create({
         data: {
@@ -507,7 +630,10 @@ router.post(
       response.status(201).json(follow);
     } catch (error) {
       // followerId + followingId formam uma chave
-      // composta. Impede seguir a mesma pessoa duas vezes.
+      // composta.
+      //
+      // Isso impede seguir a mesma pessoa duas vezes.
+
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === "P2002"
@@ -530,15 +656,23 @@ router.post(
 
 // ------------------------------------------------------
 // DELETE /users/:followerId/following/users/:followingId
+//
 // Um usuário deixa de seguir outro usuário.
+//
+// Rota protegida.
 // ------------------------------------------------------
 
 router.delete(
   "/users/:followerId/following/users/:followingId",
+  authMiddleware,
   async (request, response) => {
     try {
       const followerId = Number(request.params.followerId);
       const followingId = Number(request.params.followingId);
+
+      // ------------------------------------------------
+      // Validação dos IDs
+      // ------------------------------------------------
 
       if (
         !Number.isInteger(followerId) ||
@@ -552,6 +686,25 @@ router.delete(
 
         return;
       }
+
+      // ------------------------------------------------
+      // Autorização
+      // ------------------------------------------------
+
+      const authenticatedUserId = request.userId!;
+
+      if (authenticatedUserId !== followerId) {
+        response.status(403).json({
+          message:
+            "Você não tem permissão para deixar de seguir usuários por esta conta",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Procura a relação
+      // ------------------------------------------------
 
       const follow = await prisma.userFollow.findUnique({
         where: {
@@ -569,6 +722,10 @@ router.delete(
 
         return;
       }
+
+      // ------------------------------------------------
+      // Remove o follow
+      // ------------------------------------------------
 
       await prisma.userFollow.delete({
         where: {

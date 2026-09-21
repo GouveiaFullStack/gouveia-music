@@ -3,7 +3,7 @@
 // ======================================================
 
 import { Router } from "express";
-
+import { authMiddleware } from "../middlewares/auth.middleware.js";
 import { prisma } from "../lib/prisma.js";
 
 // ======================================================
@@ -23,13 +23,23 @@ const router = Router();
 // As reproduções mais recentes aparecem primeiro.
 // ------------------------------------------------------
 
-router.get("/users/:id/history", async (request, response) => {
+router.get("/users/:id/history", authMiddleware, async (request, response) => {
   try {
     const userId = Number(request.params.id);
 
     if (!Number.isInteger(userId) || userId <= 0) {
       response.status(400).json({
         message: "ID de usuário inválido",
+      });
+
+      return;
+    }
+
+    const authenticatedUserId = request.userId!;
+
+    if (authenticatedUserId !== userId) {
+      response.status(403).json({
+        message: "Você não tem permissão para acessar este histórico",
       });
 
       return;
@@ -104,7 +114,7 @@ router.get("/users/:id/history", async (request, response) => {
 // ouvido pelo menos 25% da duração total da música.
 // ------------------------------------------------------
 
-router.post("/users/:id/history", async (request, response) => {
+router.post("/users/:id/history", authMiddleware, async (request, response) => {
   try {
     const userId = Number(request.params.id);
 
@@ -118,6 +128,16 @@ router.post("/users/:id/history", async (request, response) => {
     if (!Number.isInteger(userId) || userId <= 0) {
       response.status(400).json({
         message: "ID de usuário inválido",
+      });
+
+      return;
+    }
+
+    const authenticatedUserId = request.userId!;
+
+    if (authenticatedUserId !== userId) {
+      response.status(403).json({
+        message: "Você não tem permissão para registrar este histórico",
       });
 
       return;

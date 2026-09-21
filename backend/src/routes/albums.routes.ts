@@ -3,7 +3,7 @@
 // ======================================================
 
 import { Router } from "express";
-
+import { authMiddleware } from "../middlewares/auth.middleware.js";
 import { prisma } from "../lib/prisma.js";
 import { Prisma } from "../generated/prisma/client.js";
 
@@ -73,7 +73,7 @@ router.get("/albums/:id", async (request, response) => {
   try {
     const albumId = Number(request.params.id);
 
-    if (Number.isNaN(albumId)) {
+    if (!Number.isInteger(albumId) || albumId <= 0) {
       response.status(400).json({
         message: "ID de álbum inválido",
       });
@@ -136,7 +136,7 @@ router.get("/albums/:id", async (request, response) => {
 // Todo álbum precisa possuir pelo menos um artista.
 // ------------------------------------------------------
 
-router.post("/albums", async (request, response) => {
+router.post("/albums", authMiddleware, async (request, response) => {
   try {
     const { title, coverUrl, releaseDate, artistIds } = request.body;
 
@@ -175,7 +175,11 @@ router.post("/albums", async (request, response) => {
     );
 
     // Verifica se algum ID é inválido.
-    if (normalizedArtistIds.some((artistId) => Number.isNaN(artistId))) {
+    if (
+      normalizedArtistIds.some(
+        (artistId) => !Number.isInteger(artistId) || artistId <= 0,
+      )
+    ) {
       response.status(400).json({
         message: "Um ou mais IDs de artistas são inválidos",
       });
@@ -198,6 +202,21 @@ router.post("/albums", async (request, response) => {
     if (existingArtists.length !== uniqueArtistIds.length) {
       response.status(404).json({
         message: "Um ou mais artistas não foram encontrados",
+      });
+
+      return;
+    }
+
+    const authenticatedUserId = request.userId!;
+
+    const ownsOneOfTheArtists = existingArtists.some(
+      (artist) => artist.userId === authenticatedUserId,
+    );
+
+    if (!ownsOneOfTheArtists) {
+      response.status(403).json({
+        message:
+          "Você precisa possuir pelo menos um dos artistas relacionados ao álbum",
       });
 
       return;
@@ -254,7 +273,7 @@ router.post("/albums", async (request, response) => {
 // Artistas e músicas são tratados separadamente.
 // ------------------------------------------------------
 
-router.patch("/albums/:id", async (request, response) => {
+router.patch("/albums/:id", authMiddleware, async (request, response) => {
   try {
     const albumId = Number(request.params.id);
 
@@ -291,6 +310,28 @@ router.patch("/albums/:id", async (request, response) => {
     if (!existingAlbum) {
       response.status(404).json({
         message: "Álbum não encontrado",
+      });
+
+      return;
+    }
+
+    const authenticatedUserId = request.userId!;
+
+    const albumArtist = await prisma.albumArtist.findFirst({
+      where: {
+        albumId,
+
+        artist: {
+          is: {
+            userId: authenticatedUserId,
+          },
+        },
+      },
+    });
+
+    if (!albumArtist) {
+      response.status(403).json({
+        message: "Você não tem permissão para alterar este álbum",
       });
 
       return;
@@ -368,7 +409,7 @@ router.patch("/albums/:id", async (request, response) => {
 // sem álbum após a exclusão.
 // ------------------------------------------------------
 
-router.delete("/albums/:id", async (request, response) => {
+router.delete("/albums/:id", authMiddleware, async (request, response) => {
   try {
     const albumId = Number(request.params.id);
 
@@ -389,6 +430,28 @@ router.delete("/albums/:id", async (request, response) => {
     if (!album) {
       response.status(404).json({
         message: "Álbum não encontrado",
+      });
+
+      return;
+    }
+
+    const authenticatedUserId = request.userId!;
+
+    const albumArtist = await prisma.albumArtist.findFirst({
+      where: {
+        albumId,
+
+        artist: {
+          is: {
+            userId: authenticatedUserId,
+          },
+        },
+      },
+    });
+
+    if (!albumArtist) {
+      response.status(403).json({
+        message: "Você não tem permissão para remover este álbum",
       });
 
       return;
@@ -415,7 +478,7 @@ router.delete("/albums/:id", async (request, response) => {
 // Adiciona músicas existentes a um álbum.
 // ------------------------------------------------------
 
-router.post("/albums/:id/songs", async (request, response) => {
+router.post("/albums/:id/songs", authMiddleware, async (request, response) => {
   try {
     const albumId = Number(request.params.id);
 
@@ -452,9 +515,35 @@ router.post("/albums/:id/songs", async (request, response) => {
       return;
     }
 
+    const authenticatedUserId = request.userId!;
+
+    const albumArtist = await prisma.albumArtist.findFirst({
+      where: {
+        albumId,
+
+        artist: {
+          is: {
+            userId: authenticatedUserId,
+          },
+        },
+      },
+    });
+
+    if (!albumArtist) {
+      response.status(403).json({
+        message: "Você não tem permissão para adicionar músicas a este álbum",
+      });
+
+      return;
+    }
+
     const normalizedSongIds = songIds.map((songId: unknown) => Number(songId));
 
-    if (normalizedSongIds.some((songId) => Number.isNaN(songId))) {
+    if (
+      normalizedSongIds.some(
+        (songId) => !Number.isInteger(songId) || songId <= 0,
+      )
+    ) {
       response.status(400).json({
         message: "Um ou mais IDs de músicas são inválidos",
       });
@@ -476,6 +565,43 @@ router.post("/albums/:id/songs", async (request, response) => {
     if (songs.length !== uniqueSongIds.length) {
       response.status(404).json({
         message: "Uma ou mais músicas não foram encontradas",
+      });
+
+      return;
+    }
+
+    const authorizedSongRelations = await prisma.songArtist.findMany({
+      where: {
+        songId: {
+          in: uniqueSongIds,
+        },
+
+        role: "main",
+
+        artist: {
+          is: {
+            userId: authenticatedUserId,
+          },
+        },
+      },
+
+      select: {
+        songId: true,
+      },
+    });
+
+    const authorizedSongIds = new Set(
+      authorizedSongRelations.map((relation) => relation.songId),
+    );
+
+    const hasUnauthorizedSong = uniqueSongIds.some(
+      (songId) => !authorizedSongIds.has(songId),
+    );
+
+    if (hasUnauthorizedSong) {
+      response.status(403).json({
+        message:
+          "Você só pode adicionar ao álbum músicas das quais seu artista seja principal",
       });
 
       return;
@@ -529,58 +655,125 @@ router.post("/albums/:id/songs", async (request, response) => {
 // Apenas seu albumId volta a ser null.
 // ------------------------------------------------------
 
-router.delete("/albums/:albumId/songs/:songId", async (request, response) => {
-  try {
-    const albumId = Number(request.params.albumId);
-    const songId = Number(request.params.songId);
+router.delete(
+  "/albums/:albumId/songs/:songId",
+  authMiddleware,
+  async (request, response) => {
+    try {
+      const albumId = Number(request.params.albumId);
+      const songId = Number(request.params.songId);
 
-    if (Number.isNaN(albumId) || Number.isNaN(songId)) {
-      response.status(400).json({
-        message: "ID de álbum ou música inválido",
+      if (
+        !Number.isInteger(albumId) ||
+        albumId <= 0 ||
+        !Number.isInteger(songId) ||
+        songId <= 0
+      ) {
+        response.status(400).json({
+          message: "ID de álbum ou música inválido",
+        });
+
+        return;
+      }
+
+      const authenticatedUserId = request.userId!;
+
+      const album = await prisma.album.findUnique({
+        where: {
+          id: albumId,
+        },
       });
 
-      return;
-    }
+      if (!album) {
+        response.status(404).json({
+          message: "Álbum não encontrado",
+        });
 
-    // Procura especificamente uma música
-    // que pertença a este álbum.
-    const song = await prisma.song.findFirst({
-      where: {
-        id: songId,
-        albumId,
-      },
-    });
+        return;
+      }
 
-    if (!song) {
-      response.status(404).json({
-        message: "A música não pertence a este álbum",
+      const albumArtist = await prisma.albumArtist.findFirst({
+        where: {
+          albumId,
+
+          artist: {
+            is: {
+              userId: authenticatedUserId,
+            },
+          },
+        },
       });
 
-      return;
+      if (!albumArtist) {
+        response.status(403).json({
+          message: "Você não tem permissão para remover músicas deste álbum",
+        });
+
+        return;
+      }
+
+      // Procura especificamente uma música
+      // que pertença a este álbum.
+      const song = await prisma.song.findFirst({
+        where: {
+          id: songId,
+          albumId,
+        },
+      });
+
+      if (!song) {
+        response.status(404).json({
+          message: "A música não pertence a este álbum",
+        });
+
+        return;
+      }
+
+      const mainArtist = await prisma.songArtist.findFirst({
+        where: {
+          songId,
+          role: "main",
+
+          artist: {
+            is: {
+              userId: authenticatedUserId,
+            },
+          },
+        },
+      });
+
+      if (!mainArtist) {
+        response.status(403).json({
+          message:
+            "Você só pode remover do álbum músicas das quais seu artista seja principal",
+        });
+
+        return;
+      }
+
+      // Remove apenas a associação com o álbum.
+      await prisma.song.update({
+        where: {
+          id: songId,
+        },
+
+        data: {
+          albumId: null,
+        },
+      });
+
+      response.json({
+        message: "Música removida do álbum",
+      });
+    } catch (error) {
+      console.error(error);
+
+      response.status(500).json({
+        message: "Erro interno do servidor",
+      });
     }
-
-    // Remove apenas a associação com o álbum.
-    await prisma.song.update({
-      where: {
-        id: songId,
-      },
-
-      data: {
-        albumId: null,
-      },
-    });
-
-    response.json({
-      message: "Música removida do álbum",
-    });
-  } catch (error) {
-    console.error(error);
-
-    response.status(500).json({
-      message: "Erro interno do servidor",
-    });
-  }
-});
+  },
+);
 
 // ======================================================
 // EXPORTAÇÃO

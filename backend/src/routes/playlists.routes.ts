@@ -3,7 +3,10 @@
 // ======================================================
 
 import { Router } from "express";
-
+import {
+  authMiddleware,
+  optionalAuthMiddleware,
+} from "../middlewares/auth.middleware.js";
 import { prisma } from "../lib/prisma.js";
 import { Prisma } from "../generated/prisma/client.js";
 
@@ -33,6 +36,9 @@ const router = Router();
 router.get("/playlists", async (request, response) => {
   try {
     const playlists = await prisma.playlist.findMany({
+      where: {
+        isPublic: true,
+      },
       include: {
         user: {
           select: {
@@ -85,77 +91,89 @@ router.get("/playlists", async (request, response) => {
 // Busca uma playlist específica.
 // ------------------------------------------------------
 
-router.get("/playlists/:id", async (request, response) => {
-  try {
-    const playlistId = Number(request.params.id);
+router.get(
+  "/playlists/:id",
+  optionalAuthMiddleware,
+  async (request, response) => {
+    try {
+      const playlistId = Number(request.params.id);
 
-    if (!Number.isInteger(playlistId) || playlistId <= 0) {
-      response.status(400).json({
-        message: "ID de playlist inválido",
-      });
+      if (!Number.isInteger(playlistId) || playlistId <= 0) {
+        response.status(400).json({
+          message: "ID de playlist inválido",
+        });
 
-      return;
-    }
+        return;
+      }
 
-    const playlist = await prisma.playlist.findUnique({
-      where: {
-        id: playlistId,
-      },
-
-      include: {
-        user: {
-          select: {
-            id: true,
-            username: true,
-            profileImageUrl: true,
-          },
+      const playlist = await prisma.playlist.findUnique({
+        where: {
+          id: playlistId,
         },
 
-        songs: {
-          orderBy: {
-            position: "asc",
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              profileImageUrl: true,
+            },
           },
 
-          include: {
-            song: {
-              include: {
-                artists: {
-                  include: {
-                    artist: true,
+          songs: {
+            orderBy: {
+              position: "asc",
+            },
+
+            include: {
+              song: {
+                include: {
+                  artists: {
+                    include: {
+                      artist: true,
+                    },
                   },
-                },
 
-                album: true,
+                  album: true,
 
-                genres: {
-                  include: {
-                    genre: true,
+                  genres: {
+                    include: {
+                      genre: true,
+                    },
                   },
                 },
               },
             },
           },
         },
-      },
-    });
-
-    if (!playlist) {
-      response.status(404).json({
-        message: "Playlist não encontrada",
       });
 
-      return;
+      if (!playlist) {
+        response.status(404).json({
+          message: "Playlist não encontrada",
+        });
+
+        return;
+      }
+
+      if (!playlist.isPublic && request.userId !== playlist.userId) {
+        response.status(403).json({
+          message: "Você não tem permissão para acessar esta playlist",
+        });
+
+        return;
+      }
+
+      response.json(playlist);
+    } catch (error) {
+      console.error(error);
+
+      response.status(500).json({
+        message: "Erro interno do servidor",
+      });
     }
-
-    response.json(playlist);
-  } catch (error) {
-    console.error(error);
-
-    response.status(500).json({
-      message: "Erro interno do servidor",
-    });
-  }
-});
+  },
+);
 
 // ------------------------------------------------------
 // POST /playlists
@@ -164,19 +182,11 @@ router.get("/playlists/:id", async (request, response) => {
 // Toda playlist pertence obrigatoriamente a um usuário.
 // ------------------------------------------------------
 
-router.post("/playlists", async (request, response) => {
+router.post("/playlists", authMiddleware, async (request, response) => {
   try {
-    const { userId, name, description, coverUrl, isPublic } = request.body;
+    const { name, description, coverUrl, isPublic } = request.body;
 
-    const parsedUserId = Number(userId);
-
-    if (!Number.isInteger(parsedUserId) || parsedUserId <= 0) {
-      response.status(400).json({
-        message: "userId inválido",
-      });
-
-      return;
-    }
+    const userId = request.userId!;
 
     if (typeof name !== "string" || !name.trim()) {
       response.status(400).json({
@@ -196,7 +206,7 @@ router.post("/playlists", async (request, response) => {
 
     const user = await prisma.user.findUnique({
       where: {
-        id: parsedUserId,
+        id: userId,
       },
     });
 
@@ -210,7 +220,7 @@ router.post("/playlists", async (request, response) => {
 
     const playlist = await prisma.playlist.create({
       data: {
-        userId: parsedUserId,
+        userId,
         name: name.trim(),
 
         description:
@@ -255,7 +265,7 @@ router.post("/playlists", async (request, response) => {
 // - isPublic
 // ------------------------------------------------------
 
-router.patch("/playlists/:id", async (request, response) => {
+router.patch("/playlists/:id", authMiddleware, async (request, response) => {
   try {
     const playlistId = Number(request.params.id);
 
@@ -291,6 +301,16 @@ router.patch("/playlists/:id", async (request, response) => {
     if (!existingPlaylist) {
       response.status(404).json({
         message: "Playlist não encontrada",
+      });
+
+      return;
+    }
+
+    const authenticatedUserId = request.userId!;
+
+    if (existingPlaylist.userId !== authenticatedUserId) {
+      response.status(403).json({
+        message: "Você não tem permissão para alterar esta playlist",
       });
 
       return;
@@ -409,7 +429,7 @@ router.patch("/playlists/:id", async (request, response) => {
 // Apenas as relações PlaylistSong são removidas.
 // ------------------------------------------------------
 
-router.delete("/playlists/:id", async (request, response) => {
+router.delete("/playlists/:id", authMiddleware, async (request, response) => {
   try {
     const playlistId = Number(request.params.id);
 
@@ -430,6 +450,16 @@ router.delete("/playlists/:id", async (request, response) => {
     if (!playlist) {
       response.status(404).json({
         message: "Playlist não encontrada",
+      });
+
+      return;
+    }
+
+    const authenticatedUserId = request.userId!;
+
+    if (playlist.userId !== authenticatedUserId) {
+      response.status(403).json({
+        message: "Você não tem permissão para remover esta playlist",
       });
 
       return;
@@ -462,118 +492,133 @@ router.delete("/playlists/:id", async (request, response) => {
 // A posição é calculada automaticamente.
 // ------------------------------------------------------
 
-router.post("/playlists/:id/songs", async (request, response) => {
-  try {
-    const playlistId = Number(request.params.id);
-    const songId = Number(request.body.songId);
+router.post(
+  "/playlists/:id/songs",
+  authMiddleware,
+  async (request, response) => {
+    try {
+      const playlistId = Number(request.params.id);
+      const songId = Number(request.body.songId);
 
-    if (!Number.isInteger(playlistId) || playlistId <= 0) {
-      response.status(400).json({
-        message: "ID de playlist inválido",
+      if (!Number.isInteger(playlistId) || playlistId <= 0) {
+        response.status(400).json({
+          message: "ID de playlist inválido",
+        });
+
+        return;
+      }
+
+      if (!Number.isInteger(songId) || songId <= 0) {
+        response.status(400).json({
+          message: "songId inválido",
+        });
+
+        return;
+      }
+
+      // Confirma se a playlist existe.
+      const playlist = await prisma.playlist.findUnique({
+        where: {
+          id: playlistId,
+        },
       });
 
-      return;
-    }
+      if (!playlist) {
+        response.status(404).json({
+          message: "Playlist não encontrada",
+        });
 
-    if (!Number.isInteger(songId) || songId <= 0) {
-      response.status(400).json({
-        message: "songId inválido",
+        return;
+      }
+
+      const authenticatedUserId = request.userId!;
+
+      if (playlist.userId !== authenticatedUserId) {
+        response.status(403).json({
+          message:
+            "Você não tem permissão para adicionar músicas a esta playlist",
+        });
+
+        return;
+      }
+
+      // Confirma se a música existe.
+      const song = await prisma.song.findUnique({
+        where: {
+          id: songId,
+        },
       });
 
-      return;
-    }
+      if (!song) {
+        response.status(404).json({
+          message: "Música não encontrada",
+        });
 
-    // Confirma se a playlist existe.
-    const playlist = await prisma.playlist.findUnique({
-      where: {
-        id: playlistId,
-      },
-    });
+        return;
+      }
 
-    if (!playlist) {
-      response.status(404).json({
-        message: "Playlist não encontrada",
+      // Verifica se a música já está na playlist.
+      const existingPlaylistSong = await prisma.playlistSong.findUnique({
+        where: {
+          playlistId_songId: {
+            playlistId,
+            songId,
+          },
+        },
       });
 
-      return;
-    }
+      if (existingPlaylistSong) {
+        response.status(409).json({
+          message: "A música já está nesta playlist",
+        });
 
-    // Confirma se a música existe.
-    const song = await prisma.song.findUnique({
-      where: {
-        id: songId,
-      },
-    });
+        return;
+      }
 
-    if (!song) {
-      response.status(404).json({
-        message: "Música não encontrada",
+      // Descobre a última posição atual.
+      const lastSong = await prisma.playlistSong.findFirst({
+        where: {
+          playlistId,
+        },
+
+        orderBy: {
+          position: "desc",
+        },
       });
 
-      return;
-    }
+      // Se a playlist estiver vazia, começa em 1.
+      const nextPosition = lastSong ? lastSong.position + 1 : 1;
 
-    // Verifica se a música já está na playlist.
-    const existingPlaylistSong = await prisma.playlistSong.findUnique({
-      where: {
-        playlistId_songId: {
+      const playlistSong = await prisma.playlistSong.create({
+        data: {
           playlistId,
           songId,
+          position: nextPosition,
         },
-      },
-    });
 
-    if (existingPlaylistSong) {
-      response.status(409).json({
-        message: "A música já está nesta playlist",
-      });
-
-      return;
-    }
-
-    // Descobre a última posição atual.
-    const lastSong = await prisma.playlistSong.findFirst({
-      where: {
-        playlistId,
-      },
-
-      orderBy: {
-        position: "desc",
-      },
-    });
-
-    // Se a playlist estiver vazia, começa em 1.
-    const nextPosition = lastSong ? lastSong.position + 1 : 1;
-
-    const playlistSong = await prisma.playlistSong.create({
-      data: {
-        playlistId,
-        songId,
-        position: nextPosition,
-      },
-
-      include: {
-        song: {
-          include: {
-            artists: {
-              include: {
-                artist: true,
+        include: {
+          song: {
+            include: {
+              artists: {
+                include: {
+                  artist: true,
+                },
               },
             },
           },
         },
-      },
-    });
+      });
 
-    response.status(201).json(playlistSong);
-  } catch (error) {
-    console.error(error);
+      response.status(201).json(playlistSong);
+    } catch (error) {
+      console.error(error);
 
-    response.status(500).json({
-      message: "Erro interno do servidor",
-    });
-  }
-});
+      response.status(500).json({
+        message: "Erro interno do servidor",
+      });
+    }
+  },
+);
 
 // ------------------------------------------------------
 // DELETE /playlists/:playlistId/songs/:songId
@@ -585,6 +630,7 @@ router.post("/playlists/:id/songs", async (request, response) => {
 
 router.delete(
   "/playlists/:playlistId/songs/:songId",
+  authMiddleware,
   async (request, response) => {
     try {
       const playlistId = Number(request.params.playlistId);
@@ -598,6 +644,30 @@ router.delete(
       ) {
         response.status(400).json({
           message: "ID de playlist ou música inválido",
+        });
+
+        return;
+      }
+
+      const playlist = await prisma.playlist.findUnique({
+        where: {
+          id: playlistId,
+        },
+      });
+
+      if (!playlist) {
+        response.status(404).json({
+          message: "Playlist não encontrada",
+        });
+
+        return;
+      }
+
+      const authenticatedUserId = request.userId!;
+
+      if (playlist.userId !== authenticatedUserId) {
+        response.status(403).json({
+          message: "Você não tem permissão para remover músicas desta playlist",
         });
 
         return;

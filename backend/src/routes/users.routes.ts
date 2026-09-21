@@ -5,6 +5,7 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 
+import { authMiddleware } from "../middlewares/auth.middleware.js";
 import { prisma } from "../lib/prisma.js";
 import { Prisma } from "../generated/prisma/client.js";
 
@@ -20,7 +21,11 @@ const router = Router();
 
 // ------------------------------------------------------
 // GET /users
+//
 // Lista todos os usuários.
+//
+// Rota pública.
+//
 // Não retorna passwordHash.
 // ------------------------------------------------------
 
@@ -30,7 +35,6 @@ router.get("/users", async (request, response) => {
       select: {
         id: true,
         username: true,
-        email: true,
         bio: true,
         profileImageUrl: true,
         createdAt: true,
@@ -49,21 +53,33 @@ router.get("/users", async (request, response) => {
 
 // ------------------------------------------------------
 // GET /users/:id
+//
 // Busca um usuário específico pelo ID.
+//
+// Rota pública.
+//
+// Não retorna passwordHash.
 // ------------------------------------------------------
 
 router.get("/users/:id", async (request, response) => {
   try {
     const userId = Number(request.params.id);
 
-    // Verifica se o ID recebido é um número válido.
-    if (Number.isNaN(userId)) {
+    // --------------------------------------------------
+    // Validação do ID
+    // --------------------------------------------------
+
+    if (!Number.isInteger(userId) || userId <= 0) {
       response.status(400).json({
         message: "ID de usuário inválido",
       });
 
       return;
     }
+
+    // --------------------------------------------------
+    // Busca do usuário
+    // --------------------------------------------------
 
     const user = await prisma.user.findUnique({
       where: {
@@ -73,7 +89,6 @@ router.get("/users/:id", async (request, response) => {
       select: {
         id: true,
         username: true,
-        email: true,
         bio: true,
         profileImageUrl: true,
         createdAt: true,
@@ -100,14 +115,20 @@ router.get("/users/:id", async (request, response) => {
 
 // ------------------------------------------------------
 // POST /users
+//
 // Cria um novo usuário.
+//
+// Rota pública.
 // ------------------------------------------------------
 
 router.post("/users", async (request, response) => {
   try {
     const { username, email, password } = request.body;
 
-    // Verifica se todos os campos obrigatórios foram enviados.
+    // --------------------------------------------------
+    // Validação dos campos obrigatórios
+    // --------------------------------------------------
+
     if (!username || !email || !password) {
       response.status(400).json({
         message: "Username, email e password são obrigatórios",
@@ -116,10 +137,16 @@ router.post("/users", async (request, response) => {
       return;
     }
 
-    // Transforma a senha em hash antes de salvar no banco.
+    // --------------------------------------------------
+    // Criação do hash da senha
+    // --------------------------------------------------
+
     const passwordHash = await bcrypt.hash(password, 10);
 
-    // Cria o usuário no PostgreSQL através do Prisma.
+    // --------------------------------------------------
+    // Criação do usuário
+    // --------------------------------------------------
+
     const user = await prisma.user.create({
       data: {
         username,
@@ -127,8 +154,7 @@ router.post("/users", async (request, response) => {
         passwordHash,
       },
 
-      // Define quais informações podem voltar para o cliente.
-      // passwordHash nunca é retornado.
+      // passwordHash nunca volta para o cliente.
       select: {
         id: true,
         username: true,
@@ -139,14 +165,13 @@ router.post("/users", async (request, response) => {
       },
     });
 
-    // 201 = recurso criado com sucesso.
+    // 201 = recurso criado.
     response.status(201).json(user);
   } catch (error) {
-    // P2002 = tentativa de duplicar um campo @unique.
-    //
-    // No nosso User:
-    // username é único
-    // email é único
+    // --------------------------------------------------
+    // Username ou email duplicado
+    // --------------------------------------------------
+
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
@@ -168,7 +193,13 @@ router.post("/users", async (request, response) => {
 
 // ------------------------------------------------------
 // PATCH /users/:id
+//
 // Atualiza parcialmente os dados de um usuário.
+//
+// Rota protegida.
+//
+// O usuário autenticado somente pode alterar
+// a própria conta.
 //
 // Pode alterar:
 // - username
@@ -178,13 +209,15 @@ router.post("/users", async (request, response) => {
 // - profileImageUrl
 // ------------------------------------------------------
 
-router.patch("/users/:id", async (request, response) => {
+router.patch("/users/:id", authMiddleware, async (request, response) => {
   try {
     const userId = Number(request.params.id);
 
-    const { username, email, password, bio, profileImageUrl } = request.body;
+    // ------------------------------------------------
+    // Validação do ID
+    // ------------------------------------------------
 
-    if (Number.isNaN(userId)) {
+    if (!Number.isInteger(userId) || userId <= 0) {
       response.status(400).json({
         message: "ID de usuário inválido",
       });
@@ -192,7 +225,36 @@ router.patch("/users/:id", async (request, response) => {
       return;
     }
 
-    // É necessário enviar pelo menos um campo.
+    // ------------------------------------------------
+    // Autorização
+    // ------------------------------------------------
+    //
+    // request.userId vem do JWT validado pelo
+    // authMiddleware.
+    //
+    // O usuário só pode alterar a própria conta.
+    // ------------------------------------------------
+
+    const authenticatedUserId = request.userId!;
+
+    if (authenticatedUserId !== userId) {
+      response.status(403).json({
+        message: "Você não tem permissão para alterar este usuário",
+      });
+
+      return;
+    }
+
+    // ------------------------------------------------
+    // Dados recebidos
+    // ------------------------------------------------
+
+    const { username, email, password, bio, profileImageUrl } = request.body;
+
+    // ------------------------------------------------
+    // É necessário enviar pelo menos um campo
+    // ------------------------------------------------
+
     if (
       username === undefined &&
       email === undefined &&
@@ -207,7 +269,10 @@ router.patch("/users/:id", async (request, response) => {
       return;
     }
 
-    // Confirma se o usuário existe.
+    // ------------------------------------------------
+    // Confirma se o usuário existe
+    // ------------------------------------------------
+
     const existingUser = await prisma.user.findUnique({
       where: {
         id: userId,
@@ -222,9 +287,13 @@ router.patch("/users/:id", async (request, response) => {
       return;
     }
 
-    // Objeto que receberá somente os campos enviados.
+    // ------------------------------------------------
+    // Monta somente os campos enviados
+    // ------------------------------------------------
+
     const data: Prisma.UserUpdateInput = {};
 
+    // Username
     if (username !== undefined) {
       if (!username) {
         response.status(400).json({
@@ -237,6 +306,7 @@ router.patch("/users/:id", async (request, response) => {
       data.username = username;
     }
 
+    // Email
     if (email !== undefined) {
       if (!email) {
         response.status(400).json({
@@ -249,16 +319,17 @@ router.patch("/users/:id", async (request, response) => {
       data.email = email;
     }
 
+    // Bio
     if (bio !== undefined) {
       data.bio = bio;
     }
 
+    // Imagem de perfil
     if (profileImageUrl !== undefined) {
       data.profileImageUrl = profileImageUrl;
     }
 
-    // Caso uma nova senha seja enviada,
-    // geramos outro hash antes de atualizar.
+    // Password
     if (password !== undefined) {
       if (!password) {
         response.status(400).json({
@@ -271,6 +342,10 @@ router.patch("/users/:id", async (request, response) => {
       data.passwordHash = await bcrypt.hash(password, 10);
     }
 
+    // ------------------------------------------------
+    // Atualização
+    // ------------------------------------------------
+
     const updatedUser = await prisma.user.update({
       where: {
         id: userId,
@@ -278,7 +353,6 @@ router.patch("/users/:id", async (request, response) => {
 
       data,
 
-      // Novamente não retornamos passwordHash.
       select: {
         id: true,
         username: true,
@@ -291,7 +365,10 @@ router.patch("/users/:id", async (request, response) => {
 
     response.json(updatedUser);
   } catch (error) {
-    // Impede username ou email duplicado.
+    // ------------------------------------------------
+    // Username ou email duplicado
+    // ------------------------------------------------
+
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
@@ -313,23 +390,51 @@ router.patch("/users/:id", async (request, response) => {
 
 // ------------------------------------------------------
 // DELETE /users/:id
+//
 // Remove um usuário comum.
 //
-// Por enquanto, usuários que já possuem perfil Artist
-// não podem ser removidos por esta rota.
+// Rota protegida.
+//
+// O usuário autenticado somente pode excluir
+// a própria conta.
+//
+// Usuários que possuem perfil Artist ainda não podem
+// ser removidos por esta rota.
 // ------------------------------------------------------
 
-router.delete("/users/:id", async (request, response) => {
+router.delete("/users/:id", authMiddleware, async (request, response) => {
   try {
     const userId = Number(request.params.id);
 
-    if (Number.isNaN(userId)) {
+    // ------------------------------------------------
+    // Validação do ID
+    // ------------------------------------------------
+
+    if (!Number.isInteger(userId) || userId <= 0) {
       response.status(400).json({
         message: "ID de usuário inválido",
       });
 
       return;
     }
+
+    // ------------------------------------------------
+    // Autorização
+    // ------------------------------------------------
+
+    const authenticatedUserId = request.userId!;
+
+    if (authenticatedUserId !== userId) {
+      response.status(403).json({
+        message: "Você não tem permissão para remover este usuário",
+      });
+
+      return;
+    }
+
+    // ------------------------------------------------
+    // Busca do usuário
+    // ------------------------------------------------
 
     const user = await prisma.user.findUnique({
       where: {
@@ -349,10 +454,14 @@ router.delete("/users/:id", async (request, response) => {
       return;
     }
 
-    // Ainda não definimos a regra definitiva para apagar
-    // artistas e todas as músicas relacionadas a eles.
+    // ------------------------------------------------
+    // Proteção para perfil de artista
+    // ------------------------------------------------
     //
-    // Por segurança, bloqueamos essa exclusão por enquanto.
+    // Ainda não definimos a regra definitiva para
+    // excluir artistas e todo o conteúdo relacionado.
+    // ------------------------------------------------
+
     if (user.artist) {
       response.status(409).json({
         message:
@@ -362,14 +471,17 @@ router.delete("/users/:id", async (request, response) => {
       return;
     }
 
+    // ------------------------------------------------
+    // Exclusão
+    // ------------------------------------------------
+
     await prisma.user.delete({
       where: {
         id: userId,
       },
     });
 
-    // 204 = operação concluída com sucesso,
-    // mas sem conteúdo na resposta.
+    // 204 = sucesso sem conteúdo.
     response.status(204).send();
   } catch (error) {
     console.error(error);
@@ -385,137 +497,183 @@ router.delete("/users/:id", async (request, response) => {
 //
 // Transforma um usuário comum em artista.
 //
+// Rota protegida.
+//
+// O usuário autenticado somente pode transformar
+// a própria conta em artista.
+//
 // Regra:
 // o perfil Artist é criado junto com sua primeira música.
 //
-// Artist + Song + SongArtist são criados
-// dentro da mesma transação.
+// Artist + Song + SongArtist são criados dentro
+// da mesma transação.
 // ------------------------------------------------------
 
-router.post("/users/:id/become-artist", async (request, response) => {
-  try {
-    const userId = Number(request.params.id);
+router.post(
+  "/users/:id/become-artist",
+  authMiddleware,
+  async (request, response) => {
+    try {
+      const userId = Number(request.params.id);
 
-    const { artistName, title, duration, audioUrl, coverUrl } = request.body;
+      // ------------------------------------------------
+      // Validação do ID
+      // ------------------------------------------------
 
-    // Converte duration explicitamente para número.
-    const songDuration = Number(duration);
+      if (!Number.isInteger(userId) || userId <= 0) {
+        response.status(400).json({
+          message: "ID de usuário inválido",
+        });
 
-    // Valida o ID recebido pela URL.
-    if (Number.isNaN(userId)) {
-      response.status(400).json({
-        message: "ID de usuário inválido",
+        return;
+      }
+
+      // ------------------------------------------------
+      // Autorização
+      // ------------------------------------------------
+
+      const authenticatedUserId = request.userId!;
+
+      if (authenticatedUserId !== userId) {
+        response.status(403).json({
+          message:
+            "Você não tem permissão para transformar este usuário em artista",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Dados recebidos
+      // ------------------------------------------------
+
+      const { artistName, title, duration, audioUrl, coverUrl } = request.body;
+
+      const songDuration = Number(duration);
+
+      // ------------------------------------------------
+      // Validação dos campos
+      // ------------------------------------------------
+
+      if (
+        !artistName ||
+        !title ||
+        Number.isNaN(songDuration) ||
+        songDuration <= 0 ||
+        !audioUrl
+      ) {
+        response.status(400).json({
+          message:
+            "artistName, title, duration e audioUrl são obrigatórios e válidos",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Confirma se o usuário existe
+      // ------------------------------------------------
+
+      const user = await prisma.user.findUnique({
+        where: {
+          id: userId,
+        },
       });
 
-      return;
-    }
+      if (!user) {
+        response.status(404).json({
+          message: "Usuário não encontrado",
+        });
 
-    // Valida os campos obrigatórios.
-    if (
-      !artistName ||
-      !title ||
-      Number.isNaN(songDuration) ||
-      songDuration <= 0 ||
-      !audioUrl
-    ) {
-      response.status(400).json({
-        message:
-          "artistName, title, duration e audioUrl são obrigatórios e válidos",
-      });
+        return;
+      }
 
-      return;
-    }
+      // ------------------------------------------------
+      // Verifica se já possui perfil de artista
+      // ------------------------------------------------
 
-    // Procura o usuário no banco.
-    const user = await prisma.user.findUnique({
-      where: {
-        id: userId,
-      },
-    });
-
-    if (!user) {
-      response.status(404).json({
-        message: "Usuário não encontrado",
-      });
-
-      return;
-    }
-
-    // Verifica se o usuário já possui perfil de artista.
-    const existingArtist = await prisma.artist.findUnique({
-      where: {
-        userId,
-      },
-    });
-
-    if (existingArtist) {
-      response.status(409).json({
-        message: "Este usuário já possui um perfil de artista",
-      });
-
-      return;
-    }
-
-    // ==================================================
-    // TRANSAÇÃO
-    // ==================================================
-    //
-    // Tudo precisa funcionar:
-    //
-    // 1. criar Artist
-    // 2. criar Song
-    // 3. criar SongArtist
-    //
-    // Se alguma operação falhar,
-    // todas são desfeitas.
-    // ==================================================
-
-    const result = await prisma.$transaction(async (tx) => {
-      // 1. Cria o perfil de artista.
-      const artist = await tx.artist.create({
-        data: {
+      const existingArtist = await prisma.artist.findUnique({
+        where: {
           userId,
-          name: artistName,
         },
       });
 
-      // 2. Cria a primeira música.
-      const song = await tx.song.create({
-        data: {
-          title,
-          duration: songDuration,
-          audioUrl,
+      if (existingArtist) {
+        response.status(409).json({
+          message: "Este usuário já possui um perfil de artista",
+        });
 
-          // Prisma aceita string ou null.
-          // Evita enviar undefined.
-          coverUrl: coverUrl ?? null,
-        },
+        return;
+      }
+
+      // ==================================================
+      // TRANSAÇÃO
+      // ==================================================
+      //
+      // As três operações precisam funcionar juntas:
+      //
+      // 1. criar Artist
+      // 2. criar Song
+      // 3. criar SongArtist
+      //
+      // Se alguma operação falhar, todas são desfeitas.
+      // ==================================================
+
+      const result = await prisma.$transaction(async (tx) => {
+        // ----------------------------------------------
+        // 1. Cria o perfil de artista
+        // ----------------------------------------------
+
+        const artist = await tx.artist.create({
+          data: {
+            userId,
+            name: artistName,
+          },
+        });
+
+        // ----------------------------------------------
+        // 2. Cria a primeira música
+        // ----------------------------------------------
+
+        const song = await tx.song.create({
+          data: {
+            title,
+            duration: songDuration,
+            audioUrl,
+
+            // Prisma aceita string ou null.
+            coverUrl: coverUrl ?? null,
+          },
+        });
+
+        // ----------------------------------------------
+        // 3. Relaciona artista e música
+        // ----------------------------------------------
+
+        await tx.songArtist.create({
+          data: {
+            artistId: artist.id,
+            songId: song.id,
+            role: "main",
+          },
+        });
+
+        return {
+          artist,
+          song,
+        };
       });
 
-      // 3. Relaciona o artista com a música.
-      await tx.songArtist.create({
-        data: {
-          artistId: artist.id,
-          songId: song.id,
-          role: "main",
-        },
+      response.status(201).json(result);
+    } catch (error) {
+      console.error(error);
+
+      response.status(500).json({
+        message: "Erro interno do servidor",
       });
-
-      return {
-        artist,
-        song,
-      };
-    });
-
-    response.status(201).json(result);
-  } catch (error) {
-    console.error(error);
-
-    response.status(500).json({
-      message: "Erro interno do servidor",
-    });
-  }
-});
+    }
+  },
+);
 
 // ======================================================
 // EXPORTAÇÃO

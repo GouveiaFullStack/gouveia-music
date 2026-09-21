@@ -4,6 +4,7 @@
 
 import { Router } from "express";
 
+import { authMiddleware } from "../middlewares/auth.middleware.js";
 import { prisma } from "../lib/prisma.js";
 import { Prisma } from "../generated/prisma/client.js";
 
@@ -19,7 +20,10 @@ const router = Router();
 
 // ------------------------------------------------------
 // GET /genres
+//
 // Lista todos os gêneros em ordem alfabética.
+//
+// Rota pública.
 // ------------------------------------------------------
 
 router.get("/genres", async (request, response) => {
@@ -42,22 +46,36 @@ router.get("/genres", async (request, response) => {
 
 // ------------------------------------------------------
 // GET /genres/:id
+//
 // Busca um gênero específico pelo ID.
 //
-// Inclui as músicas relacionadas.
+// Rota pública.
+//
+// Inclui:
+// - músicas relacionadas
+// - artistas das músicas
+// - álbum das músicas
 // ------------------------------------------------------
 
 router.get("/genres/:id", async (request, response) => {
   try {
     const genreId = Number(request.params.id);
 
-    if (Number.isNaN(genreId)) {
+    // --------------------------------------------------
+    // Validação do ID
+    // --------------------------------------------------
+
+    if (!Number.isInteger(genreId) || genreId <= 0) {
       response.status(400).json({
         message: "ID de gênero inválido",
       });
 
       return;
     }
+
+    // --------------------------------------------------
+    // Busca do gênero
+    // --------------------------------------------------
 
     const genre = await prisma.genre.findUnique({
       where: {
@@ -103,14 +121,25 @@ router.get("/genres/:id", async (request, response) => {
 
 // ------------------------------------------------------
 // POST /genres
+//
 // Cria um novo gênero.
+//
+// Rota protegida.
+//
+// IMPORTANTE:
+// futuramente esta rota será exclusiva para
+// administradores do Gouveia Music.
 // ------------------------------------------------------
 
-router.post("/genres", async (request, response) => {
+router.post("/genres", authMiddleware, async (request, response) => {
   try {
     const { name } = request.body;
 
-    if (!name || typeof name !== "string") {
+    // ------------------------------------------------
+    // Validação do nome
+    // ------------------------------------------------
+
+    if (typeof name !== "string" || !name.trim()) {
       response.status(400).json({
         message: "O nome do gênero é obrigatório",
       });
@@ -118,16 +147,11 @@ router.post("/genres", async (request, response) => {
       return;
     }
 
-    // Remove espaços extras no começo e no final.
     const normalizedName = name.trim();
 
-    if (!normalizedName) {
-      response.status(400).json({
-        message: "O nome do gênero não pode ser vazio",
-      });
-
-      return;
-    }
+    // ------------------------------------------------
+    // Criação
+    // ------------------------------------------------
 
     const genre = await prisma.genre.create({
       data: {
@@ -137,7 +161,10 @@ router.post("/genres", async (request, response) => {
 
     response.status(201).json(genre);
   } catch (error) {
-    // Genre.name possui @unique no schema.
+    // ------------------------------------------------
+    // Genre.name possui @unique
+    // ------------------------------------------------
+
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
@@ -159,22 +186,37 @@ router.post("/genres", async (request, response) => {
 
 // ------------------------------------------------------
 // PATCH /genres/:id
+//
 // Atualiza o nome de um gênero.
+//
+// Rota protegida.
+//
+// IMPORTANTE:
+// futuramente esta rota será exclusiva para
+// administradores do Gouveia Music.
 // ------------------------------------------------------
 
-router.patch("/genres/:id", async (request, response) => {
+router.patch("/genres/:id", authMiddleware, async (request, response) => {
   try {
     const genreId = Number(request.params.id);
 
     const { name } = request.body;
 
-    if (Number.isNaN(genreId)) {
+    // ------------------------------------------------
+    // Validação do ID
+    // ------------------------------------------------
+
+    if (!Number.isInteger(genreId) || genreId <= 0) {
       response.status(400).json({
         message: "ID de gênero inválido",
       });
 
       return;
     }
+
+    // ------------------------------------------------
+    // Campo obrigatório para atualização
+    // ------------------------------------------------
 
     if (name === undefined) {
       response.status(400).json({
@@ -192,6 +234,10 @@ router.patch("/genres/:id", async (request, response) => {
       return;
     }
 
+    // ------------------------------------------------
+    // Confirma se o gênero existe
+    // ------------------------------------------------
+
     const existingGenre = await prisma.genre.findUnique({
       where: {
         id: genreId,
@@ -206,6 +252,10 @@ router.patch("/genres/:id", async (request, response) => {
       return;
     }
 
+    // ------------------------------------------------
+    // Atualização
+    // ------------------------------------------------
+
     const updatedGenre = await prisma.genre.update({
       where: {
         id: genreId,
@@ -218,7 +268,10 @@ router.patch("/genres/:id", async (request, response) => {
 
     response.json(updatedGenre);
   } catch (error) {
-    // Impede dois gêneros com o mesmo nome.
+    // ------------------------------------------------
+    // Impede dois gêneros com o mesmo nome
+    // ------------------------------------------------
+
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
@@ -240,24 +293,38 @@ router.patch("/genres/:id", async (request, response) => {
 
 // ------------------------------------------------------
 // DELETE /genres/:id
+//
 // Remove um gênero.
 //
-// Proteção:
-// não permite apagar enquanto houver músicas
-// relacionadas a ele.
+// Rota protegida.
+//
+// Não permite excluir enquanto houver músicas
+// relacionadas ao gênero.
+//
+// IMPORTANTE:
+// futuramente esta rota será exclusiva para
+// administradores do Gouveia Music.
 // ------------------------------------------------------
 
-router.delete("/genres/:id", async (request, response) => {
+router.delete("/genres/:id", authMiddleware, async (request, response) => {
   try {
     const genreId = Number(request.params.id);
 
-    if (Number.isNaN(genreId)) {
+    // ------------------------------------------------
+    // Validação do ID
+    // ------------------------------------------------
+
+    if (!Number.isInteger(genreId) || genreId <= 0) {
       response.status(400).json({
         message: "ID de gênero inválido",
       });
 
       return;
     }
+
+    // ------------------------------------------------
+    // Busca do gênero
+    // ------------------------------------------------
 
     const genre = await prisma.genre.findUnique({
       where: {
@@ -277,7 +344,10 @@ router.delete("/genres/:id", async (request, response) => {
       return;
     }
 
-    // Evita apagar um gênero que ainda está sendo usado.
+    // ------------------------------------------------
+    // Proteção das relações
+    // ------------------------------------------------
+
     if (genre.songs.length > 0) {
       response.status(409).json({
         message: "O gênero possui músicas relacionadas e não pode ser removido",
@@ -285,6 +355,10 @@ router.delete("/genres/:id", async (request, response) => {
 
       return;
     }
+
+    // ------------------------------------------------
+    // Exclusão
+    // ------------------------------------------------
 
     await prisma.genre.delete({
       where: {

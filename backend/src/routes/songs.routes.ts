@@ -4,6 +4,7 @@
 
 import { Router } from "express";
 
+import { authMiddleware } from "../middlewares/auth.middleware.js";
 import { prisma } from "../lib/prisma.js";
 import { Prisma } from "../generated/prisma/client.js";
 
@@ -28,7 +29,10 @@ const router = Router();
 
 // ------------------------------------------------------
 // GET /songs
+//
 // Lista todas as músicas.
+//
+// Rota pública.
 //
 // Inclui:
 // - artistas
@@ -68,20 +72,31 @@ router.get("/songs", async (request, response) => {
 
 // ------------------------------------------------------
 // GET /songs/:id
+//
 // Busca uma música específica pelo ID.
+//
+// Rota pública.
 // ------------------------------------------------------
 
 router.get("/songs/:id", async (request, response) => {
   try {
     const songId = Number(request.params.id);
 
-    if (Number.isNaN(songId)) {
+    // --------------------------------------------------
+    // Validação do ID
+    // --------------------------------------------------
+
+    if (!Number.isInteger(songId) || songId <= 0) {
       response.status(400).json({
         message: "ID de música inválido",
       });
 
       return;
     }
+
+    // --------------------------------------------------
+    // Busca da música
+    // --------------------------------------------------
 
     const song = await prisma.song.findUnique({
       where: {
@@ -125,12 +140,19 @@ router.get("/songs/:id", async (request, response) => {
 
 // ------------------------------------------------------
 // POST /songs
+//
 // Cria uma nova música.
 //
+// Rota protegida.
+//
 // Toda música precisa possuir pelo menos um artista.
+//
+// O usuário autenticado precisa possuir pelo menos
+// um dos artistas enviados e esse artista precisa
+// estar relacionado como "main".
 // ------------------------------------------------------
 
-router.post("/songs", async (request, response) => {
+router.post("/songs", authMiddleware, async (request, response) => {
   try {
     const { title, duration, audioUrl, coverUrl, artists } = request.body as {
       title?: string;
@@ -142,12 +164,17 @@ router.post("/songs", async (request, response) => {
 
     const songDuration = Number(duration);
 
-    // Valida os campos básicos da música.
+    // ------------------------------------------------
+    // Validação dos campos básicos
+    // ------------------------------------------------
+
     if (
-      !title ||
-      Number.isNaN(songDuration) ||
+      typeof title !== "string" ||
+      !title.trim() ||
+      !Number.isFinite(songDuration) ||
       songDuration <= 0 ||
-      !audioUrl
+      typeof audioUrl !== "string" ||
+      !audioUrl.trim()
     ) {
       response.status(400).json({
         message: "title, duration e audioUrl são obrigatórios e válidos",
@@ -156,7 +183,10 @@ router.post("/songs", async (request, response) => {
       return;
     }
 
-    // Toda música precisa possuir pelo menos um artista.
+    // ------------------------------------------------
+    // Toda música precisa ter artista
+    // ------------------------------------------------
+
     if (!Array.isArray(artists) || artists.length === 0) {
       response.status(400).json({
         message: "A música precisa possuir pelo menos um artista",
@@ -165,13 +195,44 @@ router.post("/songs", async (request, response) => {
       return;
     }
 
-    // Remove IDs duplicados antes de validar.
-    const uniqueArtistIds = [
-      ...new Set(artists.map((item) => Number(item.artistId))),
-    ];
+    // ------------------------------------------------
+    // Normalização dos artistas
+    // ------------------------------------------------
+    //
+    // Remove IDs duplicados.
+    //
+    // Se o mesmo artistId aparecer mais de uma vez,
+    // somente a última ocorrência será utilizada.
+    // ------------------------------------------------
 
-    // Verifica se todos os IDs são válidos.
-    if (uniqueArtistIds.some((artistId) => Number.isNaN(artistId))) {
+    const normalizedArtists = Array.from(
+      new Map(
+        artists.map((item) => [
+          Number(item.artistId),
+
+          {
+            artistId: Number(item.artistId),
+
+            role:
+              typeof item.role === "string" && item.role.trim()
+                ? item.role.trim()
+                : "main",
+          },
+        ]),
+      ).values(),
+    );
+
+    const uniqueArtistIds = normalizedArtists.map((item) => item.artistId);
+
+    // ------------------------------------------------
+    // Validação dos IDs dos artistas
+    // ------------------------------------------------
+
+    if (
+      uniqueArtistIds.some(
+        (artistId) => !Number.isInteger(artistId) || artistId <= 0,
+      )
+    ) {
       response.status(400).json({
         message: "Um ou mais IDs de artistas são inválidos",
       });
@@ -179,7 +240,10 @@ router.post("/songs", async (request, response) => {
       return;
     }
 
-    // Confirma se todos os artistas existem.
+    // ------------------------------------------------
+    // Confirma se todos os artistas existem
+    // ------------------------------------------------
+
     const existingArtists = await prisma.artist.findMany({
       where: {
         id: {
@@ -196,20 +260,72 @@ router.post("/songs", async (request, response) => {
       return;
     }
 
+    // ------------------------------------------------
+    // Autorização
+    // ------------------------------------------------
+    //
+    // O usuário autenticado precisa ser dono de pelo
+    // menos um dos artistas informados.
+    // ------------------------------------------------
+
+    const authenticatedUserId = request.userId!;
+
+    const authenticatedUserArtists = existingArtists.filter(
+      (artist) => artist.userId === authenticatedUserId,
+    );
+
+    if (authenticatedUserArtists.length === 0) {
+      response.status(403).json({
+        message:
+          "Você precisa possuir pelo menos um dos artistas relacionados à música",
+      });
+
+      return;
+    }
+
+    // ------------------------------------------------
+    // Precisa ser artista principal
+    // ------------------------------------------------
+
+    const authenticatedArtistIds = new Set(
+      authenticatedUserArtists.map((artist) => artist.id),
+    );
+
+    const authenticatedUserIsMainArtist = normalizedArtists.some(
+      (item) =>
+        authenticatedArtistIds.has(item.artistId) && item.role === "main",
+    );
+
+    if (!authenticatedUserIsMainArtist) {
+      response.status(403).json({
+        message:
+          "Seu artista precisa estar relacionado como artista principal da música",
+      });
+
+      return;
+    }
+
+    // ------------------------------------------------
+    // Criação da música
+    // ------------------------------------------------
+
     const song = await prisma.song.create({
       data: {
-        title,
+        title: title.trim(),
+
         duration: songDuration,
-        audioUrl,
-        coverUrl: coverUrl ?? null,
+
+        audioUrl: audioUrl.trim(),
+
+        coverUrl: typeof coverUrl === "string" ? coverUrl.trim() || null : null,
 
         artists: {
-          create: artists.map((item) => ({
-            role: item.role || "main",
+          create: normalizedArtists.map((item) => ({
+            role: item.role,
 
             artist: {
               connect: {
-                id: Number(item.artistId),
+                id: item.artistId,
               },
             },
           })),
@@ -245,7 +361,13 @@ router.post("/songs", async (request, response) => {
 
 // ------------------------------------------------------
 // PATCH /songs/:id
+//
 // Atualiza parcialmente uma música.
+//
+// Rota protegida.
+//
+// Somente um usuário que possua um artista relacionado
+// como "main" pode editar.
 //
 // Pode alterar:
 // - title
@@ -254,22 +376,30 @@ router.post("/songs", async (request, response) => {
 // - coverUrl
 //
 // Relações com artistas, gêneros e álbum
-// são tratadas em rotas específicas.
+// são tratadas separadamente.
 // ------------------------------------------------------
 
-router.patch("/songs/:id", async (request, response) => {
+router.patch("/songs/:id", authMiddleware, async (request, response) => {
   try {
     const songId = Number(request.params.id);
 
     const { title, duration, audioUrl, coverUrl } = request.body;
 
-    if (Number.isNaN(songId)) {
+    // ------------------------------------------------
+    // Validação do ID
+    // ------------------------------------------------
+
+    if (!Number.isInteger(songId) || songId <= 0) {
       response.status(400).json({
         message: "ID de música inválido",
       });
 
       return;
     }
+
+    // ------------------------------------------------
+    // Precisa existir pelo menos um campo
+    // ------------------------------------------------
 
     if (
       title === undefined &&
@@ -283,6 +413,10 @@ router.patch("/songs/:id", async (request, response) => {
 
       return;
     }
+
+    // ------------------------------------------------
+    // Confirma se a música existe
+    // ------------------------------------------------
 
     const existingSong = await prisma.song.findUnique({
       where: {
@@ -298,10 +432,45 @@ router.patch("/songs/:id", async (request, response) => {
       return;
     }
 
+    // ------------------------------------------------
+    // Autorização
+    // ------------------------------------------------
+
+    const authenticatedUserId = request.userId!;
+
+    const mainArtist = await prisma.songArtist.findFirst({
+      where: {
+        songId,
+        role: "main",
+
+        artist: {
+          is: {
+            userId: authenticatedUserId,
+          },
+        },
+      },
+    });
+
+    if (!mainArtist) {
+      response.status(403).json({
+        message: "Você não tem permissão para alterar esta música",
+      });
+
+      return;
+    }
+
+    // ------------------------------------------------
+    // Dados para atualização
+    // ------------------------------------------------
+
     const data: Prisma.SongUpdateInput = {};
 
+    // ------------------------------------------------
+    // Título
+    // ------------------------------------------------
+
     if (title !== undefined) {
-      if (!title) {
+      if (typeof title !== "string" || !title.trim()) {
         response.status(400).json({
           message: "O título da música não pode ser vazio",
         });
@@ -309,13 +478,17 @@ router.patch("/songs/:id", async (request, response) => {
         return;
       }
 
-      data.title = title;
+      data.title = title.trim();
     }
+
+    // ------------------------------------------------
+    // Duração
+    // ------------------------------------------------
 
     if (duration !== undefined) {
       const songDuration = Number(duration);
 
-      if (Number.isNaN(songDuration) || songDuration <= 0) {
+      if (!Number.isFinite(songDuration) || songDuration <= 0) {
         response.status(400).json({
           message: "Duração inválida",
         });
@@ -326,8 +499,12 @@ router.patch("/songs/:id", async (request, response) => {
       data.duration = songDuration;
     }
 
+    // ------------------------------------------------
+    // Áudio
+    // ------------------------------------------------
+
     if (audioUrl !== undefined) {
-      if (!audioUrl) {
+      if (typeof audioUrl !== "string" || !audioUrl.trim()) {
         response.status(400).json({
           message: "audioUrl não pode ser vazio",
         });
@@ -335,12 +512,28 @@ router.patch("/songs/:id", async (request, response) => {
         return;
       }
 
-      data.audioUrl = audioUrl;
+      data.audioUrl = audioUrl.trim();
     }
 
+    // ------------------------------------------------
+    // Capa
+    // ------------------------------------------------
+
     if (coverUrl !== undefined) {
-      data.coverUrl = coverUrl || null;
+      if (coverUrl !== null && typeof coverUrl !== "string") {
+        response.status(400).json({
+          message: "coverUrl inválida",
+        });
+
+        return;
+      }
+
+      data.coverUrl = coverUrl === null ? null : coverUrl.trim() || null;
     }
+
+    // ------------------------------------------------
+    // Atualização
+    // ------------------------------------------------
 
     const updatedSong = await prisma.song.update({
       where: {
@@ -378,17 +571,27 @@ router.patch("/songs/:id", async (request, response) => {
 
 // ------------------------------------------------------
 // DELETE /songs/:id
+//
 // Remove uma música.
 //
-// Regra:
+// Rota protegida.
+//
+// Somente um artista principal relacionado à música
+// pode tentar removê-la.
+//
+// Regra adicional:
 // não permite apagar a última música de um artista.
 // ------------------------------------------------------
 
-router.delete("/songs/:id", async (request, response) => {
+router.delete("/songs/:id", authMiddleware, async (request, response) => {
   try {
     const songId = Number(request.params.id);
 
-    if (Number.isNaN(songId)) {
+    // ------------------------------------------------
+    // Validação do ID
+    // ------------------------------------------------
+
+    if (!Number.isInteger(songId) || songId <= 0) {
       response.status(400).json({
         message: "ID de música inválido",
       });
@@ -396,7 +599,10 @@ router.delete("/songs/:id", async (request, response) => {
       return;
     }
 
-    // Busca a música e os artistas relacionados.
+    // ------------------------------------------------
+    // Busca a música e artistas relacionados
+    // ------------------------------------------------
+
     const song = await prisma.song.findUnique({
       where: {
         id: songId,
@@ -415,11 +621,37 @@ router.delete("/songs/:id", async (request, response) => {
       return;
     }
 
-    // Nossa regra do Gouveia Music diz que um artista
-    // precisa possuir pelo menos uma música.
-    //
-    // Portanto, antes de apagar, verificamos se esta
-    // música é a última de algum dos artistas relacionados.
+    // ------------------------------------------------
+    // Autorização
+    // ------------------------------------------------
+
+    const authenticatedUserId = request.userId!;
+
+    const mainArtist = await prisma.songArtist.findFirst({
+      where: {
+        songId,
+        role: "main",
+
+        artist: {
+          is: {
+            userId: authenticatedUserId,
+          },
+        },
+      },
+    });
+
+    if (!mainArtist) {
+      response.status(403).json({
+        message: "Você não tem permissão para remover esta música",
+      });
+
+      return;
+    }
+
+    // ------------------------------------------------
+    // Regra: todo artista precisa ter uma música
+    // ------------------------------------------------
+
     for (const songArtist of song.artists) {
       const artistSongCount = await prisma.songArtist.count({
         where: {
@@ -437,8 +669,14 @@ router.delete("/songs/:id", async (request, response) => {
       }
     }
 
-    // As relações configuradas com onDelete: Cascade
-    // serão removidas junto com a música.
+    // ------------------------------------------------
+    // Exclusão
+    // ------------------------------------------------
+    //
+    // Relações configuradas com onDelete: Cascade
+    // são removidas junto com a música.
+    // ------------------------------------------------
+
     await prisma.song.delete({
       where: {
         id: songId,
@@ -457,22 +695,36 @@ router.delete("/songs/:id", async (request, response) => {
 
 // ------------------------------------------------------
 // POST /songs/:id/genres
+//
 // Relaciona gêneros existentes a uma música.
+//
+// Rota protegida.
+//
+// Somente um artista principal da música pode
+// alterar seus gêneros.
 // ------------------------------------------------------
 
-router.post("/songs/:id/genres", async (request, response) => {
+router.post("/songs/:id/genres", authMiddleware, async (request, response) => {
   try {
     const songId = Number(request.params.id);
 
     const { genreIds } = request.body;
 
-    if (Number.isNaN(songId)) {
+    // ------------------------------------------------
+    // Validação do ID da música
+    // ------------------------------------------------
+
+    if (!Number.isInteger(songId) || songId <= 0) {
       response.status(400).json({
         message: "ID de música inválido",
       });
 
       return;
     }
+
+    // ------------------------------------------------
+    // Validação dos gêneros enviados
+    // ------------------------------------------------
 
     if (!Array.isArray(genreIds) || genreIds.length === 0) {
       response.status(400).json({
@@ -486,7 +738,11 @@ router.post("/songs/:id/genres", async (request, response) => {
       ...new Set(genreIds.map((genreId) => Number(genreId))),
     ];
 
-    if (uniqueGenreIds.some((genreId) => Number.isNaN(genreId))) {
+    if (
+      uniqueGenreIds.some(
+        (genreId) => !Number.isInteger(genreId) || genreId <= 0,
+      )
+    ) {
       response.status(400).json({
         message: "Um ou mais IDs de gêneros são inválidos",
       });
@@ -494,7 +750,10 @@ router.post("/songs/:id/genres", async (request, response) => {
       return;
     }
 
-    // Confirma se a música existe.
+    // ------------------------------------------------
+    // Confirma se a música existe
+    // ------------------------------------------------
+
     const song = await prisma.song.findUnique({
       where: {
         id: songId,
@@ -509,7 +768,37 @@ router.post("/songs/:id/genres", async (request, response) => {
       return;
     }
 
-    // Confirma se todos os gêneros existem.
+    // ------------------------------------------------
+    // Autorização
+    // ------------------------------------------------
+
+    const authenticatedUserId = request.userId!;
+
+    const mainArtist = await prisma.songArtist.findFirst({
+      where: {
+        songId,
+        role: "main",
+
+        artist: {
+          is: {
+            userId: authenticatedUserId,
+          },
+        },
+      },
+    });
+
+    if (!mainArtist) {
+      response.status(403).json({
+        message: "Você não tem permissão para alterar os gêneros desta música",
+      });
+
+      return;
+    }
+
+    // ------------------------------------------------
+    // Confirma se todos os gêneros existem
+    // ------------------------------------------------
+
     const genres = await prisma.genre.findMany({
       where: {
         id: {
@@ -526,15 +815,22 @@ router.post("/songs/:id/genres", async (request, response) => {
       return;
     }
 
+    // ------------------------------------------------
+    // Cria as relações
+    // ------------------------------------------------
+
     await prisma.songGenre.createMany({
       data: uniqueGenreIds.map((genreId) => ({
         songId,
         genreId,
       })),
 
-      // Evita duplicar uma relação existente.
       skipDuplicates: true,
     });
+
+    // ------------------------------------------------
+    // Busca a música atualizada
+    // ------------------------------------------------
 
     const updatedSong = await prisma.song.findUnique({
       where: {

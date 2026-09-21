@@ -4,6 +4,7 @@
 
 import express from "express";
 
+import authRoutes from "./routes/auth.routes.js";
 import usersRoutes from "./routes/users.routes.js";
 import artistsRoutes from "./routes/artists.routes.js";
 import songsRoutes from "./routes/songs.routes.js";
@@ -41,6 +42,9 @@ app.get("/", (request, response) => {
 // ======================================================
 // ROTAS DA API
 // ======================================================
+
+//Autenticação
+app.use(authRoutes);
 
 // Usuários
 app.use(usersRoutes);
