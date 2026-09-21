@@ -1,0 +1,193 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider               = "prisma-client"
+  output                 = "../src/generated/prisma"
+  moduleFormat           = "esm"
+  generatedFileExtension = "ts"
+  importFileExtension    = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id              Int      @id @default(autoincrement())
+  username        String   @unique
+  passwordHash    String
+  email           String   @unique
+  bio             String?
+  profileImageUrl String?
+  createdAt       DateTime @default(now())
+
+  artist Artist?
+  playlists Playlist[]
+  favorites Favorite[]
+  listeningHistory ListeningHistory[]
+  followedArtists UserArtistFollow[]
+
+  followingUsers UserFollow[] @relation("UserFollowFollower")
+  followers      UserFollow[] @relation("UserFollowFollowing")
+}
+
+model Artist {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @unique
+  name      String
+  imageUrl  String?
+  bio       String?
+  verified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  songs SongArtist[]
+  albums AlbumArtist[]
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  followers UserArtistFollow[]
+}
+
+model Song {
+  id        Int      @id @default(autoincrement())
+  title     String
+  duration  Int
+  coverUrl  String?
+  audioUrl  String
+  createdAt DateTime @default(now())
+
+  albumId Int?
+  album   Album? @relation(fields: [albumId], references: [id], onDelete: SetNull)
+
+  artists SongArtist[]
+  genres  SongGenre[]
+  playlists PlaylistSong[]
+  favorites Favorite[]
+  listeningHistory ListeningHistory[]
+}
+
+model Album {
+  id          Int      @id @default(autoincrement())
+  title       String
+  coverUrl    String?
+  releaseDate DateTime
+  createdAt   DateTime @default(now())
+
+  songs   Song[]
+  artists AlbumArtist[]
+}
+
+model Genre {
+  id   Int    @id @default(autoincrement())
+  name String @unique
+
+  songs SongGenre[]
+}
+
+model SongArtist {
+  songId   Int
+  artistId Int
+  role     String
+
+  song   Song   @relation(fields: [songId], references: [id], onDelete: Cascade)
+  artist Artist @relation(fields: [artistId], references: [id], onDelete: Cascade)
+
+  @@id([songId, artistId])
+}
+
+model SongGenre {
+  songId  Int
+  genreId Int
+
+  song  Song  @relation(fields: [songId], references: [id], onDelete: Cascade)
+  genre Genre @relation(fields: [genreId], references: [id], onDelete: Cascade)
+
+  @@id([songId, genreId])
+}
+
+model AlbumArtist {
+  albumId  Int
+  artistId Int
+
+  album  Album  @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  artist Artist @relation(fields: [artistId], references: [id], onDelete: Cascade)
+
+  @@id([albumId, artistId])
+}
+
+model Playlist {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  name        String
+  description String?
+  coverUrl    String?
+  isPublic    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  user  User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  songs PlaylistSong[]
+}
+
+model PlaylistSong {
+  playlistId Int
+  songId     Int
+  position   Int
+  addedAt    DateTime @default(now())
+
+  playlist Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  song     Song     @relation(fields: [songId], references: [id], onDelete: Cascade)
+
+  @@id([playlistId, songId])
+  @@index([playlistId, position])
+}
+
+model Favorite {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  songId    Int
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  song Song @relation(fields: [songId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, songId])
+}
+
+model ListeningHistory {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+  songId        Int
+  secondsListen Int
+  playedAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  song Song @relation(fields: [songId], references: [id], onDelete: Cascade)
+
+  @@index([userId, playedAt])
+  @@index([songId])
+}
+
+model UserArtistFollow {
+  userId    Int
+  artistId  Int
+  createdAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  artist Artist @relation(fields: [artistId], references: [id], onDelete: Cascade)
+
+  @@id([userId, artistId])
+  @@index([artistId])
+}
+
+model UserFollow {
+  followerId  Int
+  followingId Int
+  createdAt   DateTime @default(now())
+
+  follower  User @relation("UserFollowFollower", fields: [followerId], references: [id], onDelete: Cascade)
+  following User @relation("UserFollowFollowing", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@id([followerId, followingId])
+  @@index([followingId])
+}
