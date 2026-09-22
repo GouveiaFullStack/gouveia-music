@@ -182,46 +182,6 @@ router.post(
   authMiddleware,
 
   // ----------------------------------------------------
-  // CONFIRMA SE O USUÁRIO POSSUI ARTIST
-  // ----------------------------------------------------
-  //
-  // Fazemos isso antes do upload para impedir que
-  // usuários comuns armazenem arquivos no servidor.
-  // ----------------------------------------------------
-
-  async (request, response, next) => {
-    try {
-      const authenticatedUserId = request.userId!;
-
-      const artist = await prisma.artist.findUnique({
-        where: {
-          userId: authenticatedUserId,
-        },
-
-        select: {
-          id: true,
-        },
-      });
-
-      if (!artist) {
-        response.status(403).json({
-          message: "Somente artistas podem publicar músicas",
-        });
-
-        return;
-      }
-
-      next();
-    } catch (error) {
-      console.error(error);
-
-      response.status(500).json({
-        message: "Erro interno do servidor",
-      });
-    }
-  },
-
-  // ----------------------------------------------------
   // UPLOAD
   // ----------------------------------------------------
 
@@ -311,6 +271,61 @@ router.post(
       }
 
       // ------------------------------------------------
+      // USUÁRIO E PERFIL DE ARTISTA
+      // ------------------------------------------------
+
+      const authenticatedUserId = request.userId!;
+
+      const user = await prisma.user.findUnique({
+        where: {
+          id: authenticatedUserId,
+        },
+
+        select: {
+          id: true,
+
+          artist: {
+            select: {
+              id: true,
+              name: true,
+              userId: true,
+            },
+          },
+        },
+      });
+
+      if (!user) {
+        await removeUploadedFiles(uploadedFiles);
+
+        response.status(404).json({
+          message: "Usuário não encontrado",
+        });
+
+        return;
+      }
+
+      const existingArtist = user.artist;
+
+      // ------------------------------------------------
+      // NOME DO ARTISTA PARA PRIMEIRA PUBLICAÇÃO
+      // ------------------------------------------------
+
+      const artistName =
+        typeof request.body.artistName === "string"
+          ? request.body.artistName.trim()
+          : "";
+
+      if (!existingArtist && !artistName) {
+        await removeUploadedFiles(uploadedFiles);
+
+        response.status(400).json({
+          message: "artistName é obrigatório na primeira publicação",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
       // ARTISTAS
       // ------------------------------------------------
       //
@@ -320,6 +335,10 @@ router.post(
       // Portanto artists chega como JSON em texto.
       // ------------------------------------------------
 
+      let normalizedArtists: {
+        artistId: number;
+        role: string;
+      }[] = [];
       const artistsRaw = request.body.artists;
 
       if (typeof artistsRaw !== "string") {
@@ -360,7 +379,7 @@ router.post(
       // NORMALIZAÇÃO DOS ARTISTAS
       // ------------------------------------------------
 
-      const normalizedArtists = Array.from(
+      normalizedArtists = Array.from(
         new Map(
           parsedArtists.map((item: unknown) => {
             if (typeof item !== "object" || item === null) {
@@ -445,8 +464,6 @@ router.post(
       // AUTORIZAÇÃO
       // ------------------------------------------------
 
-      const authenticatedUserId = request.userId!;
-
       const authenticatedArtistIds = new Set(
         existingArtists
           .filter((artist) => artist.userId === authenticatedUserId)
@@ -515,6 +532,93 @@ router.post(
       // CRIAÇÃO
       // ------------------------------------------------
 
+      // ==================================================
+      // PRIMEIRA PUBLICAÇÃO
+      // ==================================================
+      //
+      // Se o usuário ainda não possui Artist:
+      //
+      // 1. cria Artist
+      // 2. cria Song
+      // 3. cria SongArtist como main
+      //
+      // Tudo dentro da mesma transação.
+      // ==================================================
+
+      if (!existingArtist) {
+        const result = await prisma.$transaction(async (tx) => {
+          // ------------------------------------------
+          // Cria Artist
+          // ------------------------------------------
+
+          const artist = await tx.artist.create({
+            data: {
+              userId: authenticatedUserId,
+
+              name: artistName,
+            },
+          });
+
+          // ------------------------------------------
+          // Cria primeira música
+          // ------------------------------------------
+
+          const song = await tx.song.create({
+            data: {
+              title,
+              duration,
+              audioUrl,
+              coverUrl,
+
+              artists: {
+                create: {
+                  role: "main",
+
+                  artist: {
+                    connect: {
+                      id: artist.id,
+                    },
+                  },
+                },
+              },
+            },
+
+            include: {
+              artists: {
+                include: {
+                  artist: true,
+                },
+              },
+
+              album: true,
+
+              genres: {
+                include: {
+                  genre: true,
+                },
+              },
+            },
+          });
+
+          return {
+            artist,
+            song,
+          };
+        });
+
+        songCreated = true;
+
+        response.status(201).json({
+          artistCreated: true,
+
+          artist: result.artist,
+
+          song: result.song,
+        });
+
+        return;
+      }
+
       const song = await prisma.song.create({
         data: {
           title,
@@ -554,7 +658,13 @@ router.post(
 
       songCreated = true;
 
-      response.status(201).json(song);
+      response.status(201).json({
+        artistCreated: false,
+
+        artist: existingArtist,
+
+        song,
+      });
     } catch (error) {
       // Se o banco ainda não criou a música,
       // os arquivos não possuem mais utilidade.
@@ -571,227 +681,6 @@ router.post(
     }
   },
 );
-
-// ------------------------------------------------------
-// POST /songs
-//
-// Cria uma nova música.
-//
-// Rota protegida.
-//
-// Toda música precisa possuir pelo menos um artista.
-//
-// O usuário autenticado precisa possuir pelo menos
-// um dos artistas enviados e esse artista precisa
-// estar relacionado como "main".
-// ------------------------------------------------------
-
-router.post("/songs", authMiddleware, async (request, response) => {
-  try {
-    const { title, duration, audioUrl, coverUrl, artists } = request.body as {
-      title?: string;
-      duration?: number;
-      audioUrl?: string;
-      coverUrl?: string;
-      artists?: SongArtistInput[];
-    };
-
-    const songDuration = Number(duration);
-
-    // ------------------------------------------------
-    // Validação dos campos básicos
-    // ------------------------------------------------
-
-    if (
-      typeof title !== "string" ||
-      !title.trim() ||
-      !Number.isFinite(songDuration) ||
-      songDuration <= 0 ||
-      typeof audioUrl !== "string" ||
-      !audioUrl.trim()
-    ) {
-      response.status(400).json({
-        message: "title, duration e audioUrl são obrigatórios e válidos",
-      });
-
-      return;
-    }
-
-    // ------------------------------------------------
-    // Toda música precisa ter artista
-    // ------------------------------------------------
-
-    if (!Array.isArray(artists) || artists.length === 0) {
-      response.status(400).json({
-        message: "A música precisa possuir pelo menos um artista",
-      });
-
-      return;
-    }
-
-    // ------------------------------------------------
-    // Normalização dos artistas
-    // ------------------------------------------------
-    //
-    // Remove IDs duplicados.
-    //
-    // Se o mesmo artistId aparecer mais de uma vez,
-    // somente a última ocorrência será utilizada.
-    // ------------------------------------------------
-
-    const normalizedArtists = Array.from(
-      new Map(
-        artists.map((item) => [
-          Number(item.artistId),
-
-          {
-            artistId: Number(item.artistId),
-
-            role:
-              typeof item.role === "string" && item.role.trim()
-                ? item.role.trim()
-                : "main",
-          },
-        ]),
-      ).values(),
-    );
-
-    const uniqueArtistIds = normalizedArtists.map((item) => item.artistId);
-
-    // ------------------------------------------------
-    // Validação dos IDs dos artistas
-    // ------------------------------------------------
-
-    if (
-      uniqueArtistIds.some(
-        (artistId) => !Number.isInteger(artistId) || artistId <= 0,
-      )
-    ) {
-      response.status(400).json({
-        message: "Um ou mais IDs de artistas são inválidos",
-      });
-
-      return;
-    }
-
-    // ------------------------------------------------
-    // Confirma se todos os artistas existem
-    // ------------------------------------------------
-
-    const existingArtists = await prisma.artist.findMany({
-      where: {
-        id: {
-          in: uniqueArtistIds,
-        },
-      },
-    });
-
-    if (existingArtists.length !== uniqueArtistIds.length) {
-      response.status(404).json({
-        message: "Um ou mais artistas não foram encontrados",
-      });
-
-      return;
-    }
-
-    // ------------------------------------------------
-    // Autorização
-    // ------------------------------------------------
-    //
-    // O usuário autenticado precisa ser dono de pelo
-    // menos um dos artistas informados.
-    // ------------------------------------------------
-
-    const authenticatedUserId = request.userId!;
-
-    const authenticatedUserArtists = existingArtists.filter(
-      (artist) => artist.userId === authenticatedUserId,
-    );
-
-    if (authenticatedUserArtists.length === 0) {
-      response.status(403).json({
-        message:
-          "Você precisa possuir pelo menos um dos artistas relacionados à música",
-      });
-
-      return;
-    }
-
-    // ------------------------------------------------
-    // Precisa ser artista principal
-    // ------------------------------------------------
-
-    const authenticatedArtistIds = new Set(
-      authenticatedUserArtists.map((artist) => artist.id),
-    );
-
-    const authenticatedUserIsMainArtist = normalizedArtists.some(
-      (item) =>
-        authenticatedArtistIds.has(item.artistId) && item.role === "main",
-    );
-
-    if (!authenticatedUserIsMainArtist) {
-      response.status(403).json({
-        message:
-          "Seu artista precisa estar relacionado como artista principal da música",
-      });
-
-      return;
-    }
-
-    // ------------------------------------------------
-    // Criação da música
-    // ------------------------------------------------
-
-    const song = await prisma.song.create({
-      data: {
-        title: title.trim(),
-
-        duration: songDuration,
-
-        audioUrl: audioUrl.trim(),
-
-        coverUrl: typeof coverUrl === "string" ? coverUrl.trim() || null : null,
-
-        artists: {
-          create: normalizedArtists.map((item) => ({
-            role: item.role,
-
-            artist: {
-              connect: {
-                id: item.artistId,
-              },
-            },
-          })),
-        },
-      },
-
-      include: {
-        artists: {
-          include: {
-            artist: true,
-          },
-        },
-
-        album: true,
-
-        genres: {
-          include: {
-            genre: true,
-          },
-        },
-      },
-    });
-
-    response.status(201).json(song);
-  } catch (error) {
-    console.error(error);
-
-    response.status(500).json({
-      message: "Erro interno do servidor",
-    });
-  }
-});
 
 // ------------------------------------------------------
 // PATCH /songs/:id/cover

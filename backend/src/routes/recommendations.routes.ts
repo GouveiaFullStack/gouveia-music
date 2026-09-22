@@ -12,6 +12,7 @@ import {
   getForYouMix,
   getDiscoveryMix,
   getFavoritesMix,
+  getHomeData,
 } from "../services/recommendations.service.js";
 
 // ======================================================
@@ -305,6 +306,46 @@ router.get(
       }
 
       response.json(mix);
+    } catch (error) {
+      console.error(error);
+
+      response.status(500).json({
+        message: "Erro interno do servidor",
+      });
+    }
+  },
+);
+
+// ======================================================
+// GET /home
+// ======================================================
+//
+// Retorna os principais conteúdos personalizados
+// necessários para montar a Home do Mousiké.
+//
+// Rota protegida.
+// ======================================================
+
+router.get(
+  "/home",
+
+  authMiddleware,
+
+  async (request, response) => {
+    try {
+      const userId = request.userId!;
+
+      const home = await getHomeData(userId);
+
+      if (!home) {
+        response.status(404).json({
+          message: "Usuário não encontrado",
+        });
+
+        return;
+      }
+
+      response.json(home);
     } catch (error) {
       console.error(error);
 

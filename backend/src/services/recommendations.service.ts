@@ -1404,3 +1404,254 @@ export async function getFavoritesMix(userId: number) {
     songs,
   };
 }
+
+// ======================================================
+// HOME
+// ======================================================
+//
+// Reúne os principais conteúdos personalizados
+// necessários para a Home do Mousiké.
+//
+// Evitamos chamar todas as rotas separadamente
+// no frontend.
+//
+// O motor principal de recomendações é calculado
+// apenas uma vez nesta função.
+// ======================================================
+
+export async function getHomeData(userId: number) {
+  // ----------------------------------------------------
+  // Carrega em paralelo:
+  //
+  // - recomendações principais
+  // - mix baseada em favoritos
+  // ----------------------------------------------------
+
+  const [recommendationResult, favoritesMix] = await Promise.all([
+    getRecommendations(userId),
+
+    getFavoritesMix(userId),
+  ]);
+
+  // ----------------------------------------------------
+  // Usuário não encontrado
+  // ----------------------------------------------------
+
+  if (!recommendationResult || !favoritesMix) {
+    return null;
+  }
+
+  // ====================================================
+  // MIX PARA VOCÊ
+  // ====================================================
+
+  const forYouSongIds = new Set<number>();
+
+  const forYouSongs = [];
+
+  for (const item of recommendationResult.recommendations) {
+    if (forYouSongIds.has(item.song.id)) {
+      continue;
+    }
+
+    forYouSongIds.add(item.song.id);
+
+    forYouSongs.push(item.song);
+
+    if (forYouSongs.length >= 20) {
+      break;
+    }
+  }
+
+  // Completa com descobertas.
+  for (const item of recommendationResult.sections.discoveries) {
+    if (forYouSongs.length >= 20) {
+      break;
+    }
+
+    if (forYouSongIds.has(item.song.id)) {
+      continue;
+    }
+
+    forYouSongIds.add(item.song.id);
+
+    forYouSongs.push(item.song);
+  }
+
+  const forYou = {
+    type: "for-you",
+
+    name: "Mix para você",
+
+    description:
+      "Uma seleção baseada no que você ouve, favorita e nos artistas que segue.",
+
+    totalSongs: forYouSongs.length,
+
+    songs: forYouSongs,
+  };
+
+  // ====================================================
+  // DESCOBERTAS
+  // ====================================================
+
+  const discoverySongIds = new Set<number>();
+
+  const discoverySongs = [];
+
+  // Primeiro usamos descobertas puras.
+  for (const item of recommendationResult.sections.discoveries) {
+    if (discoverySongIds.has(item.song.id)) {
+      continue;
+    }
+
+    discoverySongIds.add(item.song.id);
+
+    discoverySongs.push(item.song);
+
+    if (discoverySongs.length >= 20) {
+      break;
+    }
+  }
+
+  // Se ainda houver espaço, completamos
+  // com recomendações personalizadas.
+  for (const item of recommendationResult.recommendations) {
+    if (discoverySongs.length >= 20) {
+      break;
+    }
+
+    if (discoverySongIds.has(item.song.id)) {
+      continue;
+    }
+
+    discoverySongIds.add(item.song.id);
+
+    discoverySongs.push(item.song);
+  }
+
+  const discover = {
+    type: "discover",
+
+    name: "Descobertas para você",
+
+    description: "Músicas para explorar além do que você já costuma ouvir.",
+
+    totalSongs: discoverySongs.length,
+
+    songs: discoverySongs,
+  };
+
+  // ====================================================
+  // SEÇÕES DA HOME
+  // ====================================================
+  //
+  // Todas as seções seguem a mesma estrutura:
+  //
+  // type
+  // title
+  // description
+  // songs
+  //
+  // Isso permite que o frontend renderize a Home
+  // dinamicamente.
+  // ====================================================
+
+  // ----------------------------------------------------
+  // Artistas que o usuário segue
+  // ----------------------------------------------------
+
+  const followedArtistSongs =
+    recommendationResult.sections.fromFollowedArtists.map((item) => item.song);
+
+  // ----------------------------------------------------
+  // Porque você ouviu
+  // ----------------------------------------------------
+
+  const becauseYouListenedSongs =
+    recommendationResult.sections.becauseYouListened.map((item) => item.song);
+
+  const sections = [
+    {
+      type: "for-you",
+
+      title: "Mix para você",
+
+      description:
+        "Uma seleção baseada no que você ouve, favorita e nos artistas que segue.",
+
+      songs: forYou.songs,
+    },
+
+    {
+      type: "followed-artists",
+
+      title: "De artistas que você segue",
+
+      description:
+        "Novas sugestões de artistas que fazem parte da sua biblioteca.",
+
+      songs: followedArtistSongs,
+    },
+
+    {
+      type: "favorites",
+
+      title: "Favoritas e parecidas",
+
+      description: "Suas favoritas acompanhadas de músicas relacionadas.",
+
+      songs: favoritesMix.songs,
+    },
+
+    {
+      type: "because-you-listened",
+
+      title: "Porque você ouviu",
+
+      description:
+        "Músicas relacionadas ao que você tem escutado recentemente.",
+
+      songs: becauseYouListenedSongs,
+    },
+
+    {
+      type: "discover",
+
+      title: "Descobertas para você",
+
+      description: "Músicas para explorar além do que você já costuma ouvir.",
+
+      songs: discover.songs,
+    },
+  ];
+
+  const visibleSections = sections.filter(
+    (section) => section.songs.length > 0,
+  );
+
+  // ====================================================
+  // RESULTADO DA HOME
+  // ====================================================
+
+  return {
+    generatedAt: new Date(),
+
+    // --------------------------------------------------
+    // Informações usadas para entender como a Home
+    // foi personalizada.
+    // --------------------------------------------------
+
+    personalization: {
+      strategy: recommendationResult.strategy,
+
+      basedOn: recommendationResult.basedOn,
+    },
+
+    // --------------------------------------------------
+    // Seções prontas para o frontend.
+    // --------------------------------------------------
+
+    sections: visibleSections,
+  };
+}
