@@ -19,6 +19,7 @@ import followsRoutes from "./routes/follows.routes.js";
 import searchRoutes from "./routes/search.routes.js";
 import { uploadErrorMiddleware } from "./middlewares/upload-error.middleware.js";
 import uploadsRoutes from "./routes/uploads.routes.js";
+import recommendationsRoutes from "./routes/recommendations.routes.js";
 
 // ======================================================
 // CONFIGURAÇÃO DA APLICAÇÃO
@@ -93,6 +94,9 @@ app.use(uploadErrorMiddleware);
 
 // Uploads
 app.use(uploadsRoutes);
+
+// Recomendações
+app.use(recommendationsRoutes);
 
 // ======================================================
 // ROTA NÃO ENCONTRADA
