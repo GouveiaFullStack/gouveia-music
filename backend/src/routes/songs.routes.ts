@@ -7,22 +7,12 @@ import { Router } from "express";
 import { authMiddleware } from "../middlewares/auth.middleware.js";
 import { createImageUpload } from "../config/upload.js";
 import { prisma } from "../lib/prisma.js";
-import { Prisma } from "../generated/prisma/client.js";
 import { parseFile } from "music-metadata";
 import { createSongPublishUpload } from "../config/upload.js";
 import {
   removeLocalUploadByUrl,
   removeUploadedFile,
 } from "../lib/upload-files.js";
-
-// ======================================================
-// TIPOS AUXILIARES
-// ======================================================
-
-type SongArtistInput = {
-  artistId: number;
-  role?: string;
-};
 
 // ======================================================
 // CONFIGURAÇÃO DO ROUTER
@@ -903,9 +893,13 @@ router.patch(
 //
 // Pode alterar:
 // - title
-// - duration
-// - audioUrl
-// - coverUrl
+//
+// A capa é alterada separadamente por:
+//
+// PATCH /songs/:id/cover
+//
+// O áudio e a duração são definidos pelo arquivo
+// enviado durante a publicação da música.
 //
 // Relações com artistas, gêneros e álbum
 // são tratadas separadamente.
@@ -915,7 +909,7 @@ router.patch("/songs/:id", authMiddleware, async (request, response) => {
   try {
     const songId = Number(request.params.id);
 
-    const { title, duration, audioUrl, coverUrl } = request.body;
+    const { title } = request.body;
 
     // ------------------------------------------------
     // Validação do ID
@@ -933,12 +927,7 @@ router.patch("/songs/:id", authMiddleware, async (request, response) => {
     // Precisa existir pelo menos um campo
     // ------------------------------------------------
 
-    if (
-      title === undefined &&
-      duration === undefined &&
-      audioUrl === undefined &&
-      coverUrl === undefined
-    ) {
+    if (title === undefined) {
       response.status(400).json({
         message: "Nenhum campo foi informado para atualização",
       });
@@ -992,77 +981,16 @@ router.patch("/songs/:id", authMiddleware, async (request, response) => {
     }
 
     // ------------------------------------------------
-    // Dados para atualização
-    // ------------------------------------------------
-
-    const data: Prisma.SongUpdateInput = {};
-
-    // ------------------------------------------------
     // Título
     // ------------------------------------------------
 
-    if (title !== undefined) {
-      if (typeof title !== "string" || !title.trim()) {
-        response.status(400).json({
-          message: "O título da música não pode ser vazio",
-        });
+    if (typeof title !== "string" || !title.trim()) {
+      response.status(400).json({
+        message: "O título da música não pode ser vazio",
+      });
 
-        return;
-      }
-
-      data.title = title.trim();
+      return;
     }
-
-    // ------------------------------------------------
-    // Duração
-    // ------------------------------------------------
-
-    if (duration !== undefined) {
-      const songDuration = Number(duration);
-
-      if (!Number.isFinite(songDuration) || songDuration <= 0) {
-        response.status(400).json({
-          message: "Duração inválida",
-        });
-
-        return;
-      }
-
-      data.duration = songDuration;
-    }
-
-    // ------------------------------------------------
-    // Áudio
-    // ------------------------------------------------
-
-    if (audioUrl !== undefined) {
-      if (typeof audioUrl !== "string" || !audioUrl.trim()) {
-        response.status(400).json({
-          message: "audioUrl não pode ser vazio",
-        });
-
-        return;
-      }
-
-      data.audioUrl = audioUrl.trim();
-    }
-
-    // ------------------------------------------------
-    // Capa
-    // ------------------------------------------------
-
-    if (coverUrl !== undefined) {
-      if (coverUrl !== null && typeof coverUrl !== "string") {
-        response.status(400).json({
-          message: "coverUrl inválida",
-        });
-
-        return;
-      }
-
-      data.coverUrl = coverUrl === null ? null : coverUrl.trim() || null;
-    }
-
     // ------------------------------------------------
     // Atualização
     // ------------------------------------------------
@@ -1072,7 +1000,9 @@ router.patch("/songs/:id", authMiddleware, async (request, response) => {
         id: songId,
       },
 
-      data,
+      data: {
+        title: title.trim(),
+      },
 
       include: {
         artists: {

@@ -31,3 +31,6 @@ Thumbs.db
 
 # Arquivos temporários
 *.tmp
+
+# Arquivos enviados localmente
+backend/uploads/
