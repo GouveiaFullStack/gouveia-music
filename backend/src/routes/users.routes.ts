@@ -6,14 +6,20 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 
 import { authMiddleware } from "../middlewares/auth.middleware.js";
+import { createImageUpload } from "../config/upload.js";
 import { prisma } from "../lib/prisma.js";
 import { Prisma } from "../generated/prisma/client.js";
+import {
+  removeLocalUploadByUrl,
+  removeUploadedFile,
+} from "../lib/upload-files.js";
 
 // ======================================================
 // CONFIGURAÇÃO DO ROUTER
 // ======================================================
 
 const router = Router();
+const profileImageUpload = createImageUpload("profile-images");
 
 // ======================================================
 // ROTAS DE USUÁRIOS
@@ -192,6 +198,211 @@ router.post("/users", async (request, response) => {
 });
 
 // ------------------------------------------------------
+// DELETE /users/me/profile-image
+//
+// Remove a imagem de perfil do usuário autenticado.
+// ------------------------------------------------------
+
+router.delete(
+  "/users/me/profile-image",
+
+  authMiddleware,
+
+  async (request, response) => {
+    try {
+      const userId = request.userId!;
+
+      // ------------------------------------------------
+      // Busca usuário
+      // ------------------------------------------------
+
+      const user = await prisma.user.findUnique({
+        where: {
+          id: userId,
+        },
+
+        select: {
+          id: true,
+          profileImageUrl: true,
+        },
+      });
+
+      if (!user) {
+        response.status(404).json({
+          message: "Usuário não encontrado",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Sem foto
+      // ------------------------------------------------
+
+      if (!user.profileImageUrl) {
+        response.status(404).json({
+          message: "O usuário não possui imagem de perfil",
+        });
+
+        return;
+      }
+
+      const oldProfileImageUrl = user.profileImageUrl;
+
+      // ------------------------------------------------
+      // Banco primeiro
+      // ------------------------------------------------
+
+      await prisma.user.update({
+        where: {
+          id: userId,
+        },
+
+        data: {
+          profileImageUrl: null,
+        },
+      });
+
+      // ------------------------------------------------
+      // Arquivo depois
+      // ------------------------------------------------
+
+      await removeLocalUploadByUrl(oldProfileImageUrl);
+
+      response.status(204).send();
+    } catch (error) {
+      console.error(error);
+
+      response.status(500).json({
+        message: "Erro interno do servidor",
+      });
+    }
+  },
+);
+
+// ------------------------------------------------------
+// PATCH /users/me/profile-image
+//
+// Atualiza a imagem de perfil do usuário autenticado.
+//
+// Content-Type:
+// multipart/form-data
+//
+// Campo:
+// image
+// ------------------------------------------------------
+
+router.patch(
+  "/users/me/profile-image",
+
+  authMiddleware,
+
+  profileImageUpload.single("image"),
+
+  async (request, response) => {
+    try {
+      const userId = request.userId!;
+
+      // ------------------------------------------------
+      // Arquivo obrigatório
+      // ------------------------------------------------
+
+      if (!request.file) {
+        response.status(400).json({
+          message: "Envie uma imagem JPEG, PNG ou WEBP",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Busca usuário e imagem atual
+      // ------------------------------------------------
+
+      const existingUser = await prisma.user.findUnique({
+        where: {
+          id: userId,
+        },
+
+        select: {
+          id: true,
+          profileImageUrl: true,
+        },
+      });
+
+      if (!existingUser) {
+        // O Multer já salvou a nova imagem.
+        // Como o usuário não existe, precisamos apagá-la.
+
+        await removeUploadedFile(request.file.path);
+
+        response.status(404).json({
+          message: "Usuário não encontrado",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Nova URL
+      // ------------------------------------------------
+
+      const profileImageUrl = `/uploads/profile-images/${request.file.filename}`;
+
+      // ------------------------------------------------
+      // Atualiza banco
+      // ------------------------------------------------
+
+      const updatedUser = await prisma.user.update({
+        where: {
+          id: userId,
+        },
+
+        data: {
+          profileImageUrl,
+        },
+
+        select: {
+          id: true,
+          username: true,
+          email: true,
+          bio: true,
+          profileImageUrl: true,
+          createdAt: true,
+        },
+      });
+
+      // ------------------------------------------------
+      // Remove imagem anterior
+      // ------------------------------------------------
+      //
+      // Só fazemos isso DEPOIS que o Prisma conseguiu
+      // atualizar o usuário.
+      // ------------------------------------------------
+
+      await removeLocalUploadByUrl(existingUser.profileImageUrl);
+
+      response.json(updatedUser);
+    } catch (error) {
+      // ------------------------------------------------
+      // Se o banco falhou depois do upload,
+      // removemos a imagem nova.
+      // ------------------------------------------------
+
+      if (request.file) {
+        await removeUploadedFile(request.file.path);
+      }
+
+      console.error(error);
+
+      response.status(500).json({
+        message: "Erro interno do servidor",
+      });
+    }
+  },
+);
+
+// ------------------------------------------------------
 // PATCH /users/:id
 //
 // Atualiza parcialmente os dados de um usuário.
@@ -206,7 +417,9 @@ router.post("/users", async (request, response) => {
 // - email
 // - password
 // - bio
-// - profileImageUrl
+
+//A imagem de perfil é alterada por:
+//PATCH /users/me/profile-image
 // ------------------------------------------------------
 
 router.patch("/users/:id", authMiddleware, async (request, response) => {
@@ -249,7 +462,7 @@ router.patch("/users/:id", authMiddleware, async (request, response) => {
     // Dados recebidos
     // ------------------------------------------------
 
-    const { username, email, password, bio, profileImageUrl } = request.body;
+    const { username, email, password, bio } = request.body;
 
     // ------------------------------------------------
     // É necessário enviar pelo menos um campo
@@ -259,8 +472,7 @@ router.patch("/users/:id", authMiddleware, async (request, response) => {
       username === undefined &&
       email === undefined &&
       password === undefined &&
-      bio === undefined &&
-      profileImageUrl === undefined
+      bio === undefined
     ) {
       response.status(400).json({
         message: "Nenhum campo foi informado para atualização",
@@ -322,11 +534,6 @@ router.patch("/users/:id", authMiddleware, async (request, response) => {
     // Bio
     if (bio !== undefined) {
       data.bio = bio;
-    }
-
-    // Imagem de perfil
-    if (profileImageUrl !== undefined) {
-      data.profileImageUrl = profileImageUrl;
     }
 
     // Password
@@ -481,7 +688,12 @@ router.delete("/users/:id", authMiddleware, async (request, response) => {
       },
     });
 
-    // 204 = sucesso sem conteúdo.
+    // --------------------------------------------------
+    // REMOVE FOTO DE PERFIL LOCAL
+    // --------------------------------------------------
+
+    await removeLocalUploadByUrl(user.profileImageUrl);
+
     response.status(204).send();
   } catch (error) {
     console.error(error);

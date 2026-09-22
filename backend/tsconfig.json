@@ -11,6 +11,7 @@
     "target": "es2023",
     "moduleResolution": "bundler",
     "types": ["node"],
+    "customConditions": ["node"],
     // For nodejs:
     // "lib": ["esnext"],
     // "types": ["node"],

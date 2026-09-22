@@ -4,14 +4,20 @@
 
 import { Router } from "express";
 import { authMiddleware } from "../middlewares/auth.middleware.js";
+import { createImageUpload } from "../config/upload.js";
 import { prisma } from "../lib/prisma.js";
 import { Prisma } from "../generated/prisma/client.js";
+import {
+  removeLocalUploadByUrl,
+  removeUploadedFile,
+} from "../lib/upload-files.js";
 
 // ======================================================
 // CONFIGURAÇÃO DO ROUTER
 // ======================================================
 
 const router = Router();
+const albumCoverUpload = createImageUpload("album-covers");
 
 // ======================================================
 // ROTAS DE ÁLBUNS
@@ -138,7 +144,7 @@ router.get("/albums/:id", async (request, response) => {
 
 router.post("/albums", authMiddleware, async (request, response) => {
   try {
-    const { title, coverUrl, releaseDate, artistIds } = request.body;
+    const { title, releaseDate, artistIds } = request.body;
 
     // Valida os campos básicos.
     if (!title || !releaseDate) {
@@ -226,7 +232,6 @@ router.post("/albums", authMiddleware, async (request, response) => {
     const album = await prisma.album.create({
       data: {
         title,
-        coverUrl: coverUrl ?? null,
         releaseDate: parsedReleaseDate,
 
         artists: {
@@ -262,6 +267,335 @@ router.post("/albums", authMiddleware, async (request, response) => {
 });
 
 // ------------------------------------------------------
+// PATCH /albums/:id/cover
+//
+// Atualiza a capa do álbum.
+//
+// Rota protegida.
+//
+// O usuário autenticado precisa possuir pelo menos
+// um dos artistas relacionados ao álbum.
+//
+// Content-Type:
+// multipart/form-data
+//
+// Campo:
+// image
+// ------------------------------------------------------
+
+router.patch(
+  "/albums/:id/cover",
+
+  authMiddleware,
+
+  // ----------------------------------------------------
+  // AUTORIZAÇÃO ANTES DO UPLOAD
+  // ----------------------------------------------------
+
+  async (request, response, next) => {
+    try {
+      const albumId = Number(request.params.id);
+
+      // ------------------------------------------------
+      // Validação do ID
+      // ------------------------------------------------
+
+      if (!Number.isInteger(albumId) || albumId <= 0) {
+        response.status(400).json({
+          message: "ID de álbum inválido",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Confirma se o álbum existe
+      // ------------------------------------------------
+
+      const album = await prisma.album.findUnique({
+        where: {
+          id: albumId,
+        },
+
+        select: {
+          id: true,
+        },
+      });
+
+      if (!album) {
+        response.status(404).json({
+          message: "Álbum não encontrado",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Autorização
+      // ------------------------------------------------
+
+      const authenticatedUserId = request.userId!;
+
+      const albumArtist = await prisma.albumArtist.findFirst({
+        where: {
+          albumId,
+
+          artist: {
+            is: {
+              userId: authenticatedUserId,
+            },
+          },
+        },
+      });
+
+      if (!albumArtist) {
+        response.status(403).json({
+          message: "Você não tem permissão para alterar este álbum",
+        });
+
+        return;
+      }
+
+      next();
+    } catch (error) {
+      console.error(error);
+
+      response.status(500).json({
+        message: "Erro interno do servidor",
+      });
+    }
+  },
+
+  // ----------------------------------------------------
+  // UPLOAD
+  // ----------------------------------------------------
+
+  albumCoverUpload.single("image"),
+
+  // ----------------------------------------------------
+  // ATUALIZAÇÃO
+  // ----------------------------------------------------
+
+  async (request, response) => {
+    try {
+      const albumId = Number(request.params.id);
+
+      // ------------------------------------------------
+      // Arquivo obrigatório
+      // ------------------------------------------------
+
+      if (!request.file) {
+        response.status(400).json({
+          message: "Envie uma imagem JPEG, PNG ou WEBP",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Busca a capa anterior
+      // ------------------------------------------------
+
+      const existingAlbum = await prisma.album.findUnique({
+        where: {
+          id: albumId,
+        },
+
+        select: {
+          id: true,
+          coverUrl: true,
+        },
+      });
+
+      if (!existingAlbum) {
+        await removeUploadedFile(request.file.path);
+
+        response.status(404).json({
+          message: "Álbum não encontrado",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Nova URL
+      // ------------------------------------------------
+
+      const coverUrl = `/uploads/album-covers/${request.file.filename}`;
+
+      // ------------------------------------------------
+      // Atualiza banco
+      // ------------------------------------------------
+
+      const updatedAlbum = await prisma.album.update({
+        where: {
+          id: albumId,
+        },
+
+        data: {
+          coverUrl,
+        },
+
+        include: {
+          artists: {
+            include: {
+              artist: true,
+            },
+          },
+
+          songs: true,
+        },
+      });
+
+      // ------------------------------------------------
+      // Remove capa anterior
+      // ------------------------------------------------
+
+      await removeLocalUploadByUrl(existingAlbum.coverUrl);
+
+      response.json(updatedAlbum);
+    } catch (error) {
+      // Se o arquivo foi salvo, mas o banco falhou,
+      // removemos a nova imagem.
+
+      if (request.file) {
+        await removeUploadedFile(request.file.path);
+      }
+
+      console.error(error);
+
+      response.status(500).json({
+        message: "Erro interno do servidor",
+      });
+    }
+  },
+);
+
+// ------------------------------------------------------
+// DELETE /albums/:id/cover
+//
+// Remove somente a capa do álbum.
+//
+// O álbum continua existindo.
+// coverUrl volta para null.
+// ------------------------------------------------------
+
+router.delete(
+  "/albums/:id/cover",
+
+  authMiddleware,
+
+  async (request, response) => {
+    try {
+      const albumId = Number(request.params.id);
+
+      // ------------------------------------------------
+      // Validação do ID
+      // ------------------------------------------------
+
+      if (!Number.isInteger(albumId) || albumId <= 0) {
+        response.status(400).json({
+          message: "ID de álbum inválido",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Busca álbum
+      // ------------------------------------------------
+
+      const album = await prisma.album.findUnique({
+        where: {
+          id: albumId,
+        },
+
+        select: {
+          id: true,
+          coverUrl: true,
+        },
+      });
+
+      if (!album) {
+        response.status(404).json({
+          message: "Álbum não encontrado",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Autorização
+      // ------------------------------------------------
+
+      const authenticatedUserId = request.userId!;
+
+      const albumArtist = await prisma.albumArtist.findFirst({
+        where: {
+          albumId,
+
+          artist: {
+            is: {
+              userId: authenticatedUserId,
+            },
+          },
+        },
+      });
+
+      if (!albumArtist) {
+        response.status(403).json({
+          message: "Você não tem permissão para alterar este álbum",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Sem capa
+      // ------------------------------------------------
+
+      if (!album.coverUrl) {
+        response.status(404).json({
+          message: "O álbum não possui capa",
+        });
+
+        return;
+      }
+
+      const oldCoverUrl = album.coverUrl;
+
+      // ------------------------------------------------
+      // Banco primeiro
+      // ------------------------------------------------
+
+      await prisma.album.update({
+        where: {
+          id: albumId,
+        },
+
+        data: {
+          coverUrl: null,
+        },
+      });
+
+      // ------------------------------------------------
+      // Arquivo físico depois
+      // ------------------------------------------------
+
+      await removeLocalUploadByUrl(oldCoverUrl);
+
+      response.status(204).send();
+    } catch (error) {
+      console.error(error);
+
+      response.status(500).json({
+        message: "Erro interno do servidor",
+      });
+    }
+  },
+);
+
+// ------------------------------------------------------
 // PATCH /albums/:id
 // Atualiza parcialmente um álbum.
 //
@@ -277,7 +611,7 @@ router.patch("/albums/:id", authMiddleware, async (request, response) => {
   try {
     const albumId = Number(request.params.id);
 
-    const { title, coverUrl, releaseDate } = request.body;
+    const { title, releaseDate } = request.body;
 
     if (Number.isNaN(albumId)) {
       response.status(400).json({
@@ -288,11 +622,7 @@ router.patch("/albums/:id", authMiddleware, async (request, response) => {
     }
 
     // Precisa existir pelo menos um campo para atualizar.
-    if (
-      title === undefined &&
-      coverUrl === undefined &&
-      releaseDate === undefined
-    ) {
+    if (title === undefined && releaseDate === undefined) {
       response.status(400).json({
         message: "Nenhum campo foi informado para atualização",
       });
@@ -350,11 +680,6 @@ router.patch("/albums/:id", authMiddleware, async (request, response) => {
       }
 
       data.title = title;
-    }
-
-    // Atualização da capa.
-    if (coverUrl !== undefined) {
-      data.coverUrl = coverUrl || null;
     }
 
     // Atualização da data de lançamento.
@@ -462,6 +787,12 @@ router.delete("/albums/:id", authMiddleware, async (request, response) => {
         id: albumId,
       },
     });
+
+    // --------------------------------------------------
+    // REMOVE CAPA LOCAL
+    // --------------------------------------------------
+
+    await removeLocalUploadByUrl(album.coverUrl);
 
     response.status(204).send();
   } catch (error) {

@@ -7,14 +7,20 @@ import {
   authMiddleware,
   optionalAuthMiddleware,
 } from "../middlewares/auth.middleware.js";
+import { createImageUpload } from "../config/upload.js";
 import { prisma } from "../lib/prisma.js";
 import { Prisma } from "../generated/prisma/client.js";
+import {
+  removeLocalUploadByUrl,
+  removeUploadedFile,
+} from "../lib/upload-files.js";
 
 // ======================================================
 // CONFIGURAÇÃO DO ROUTER
 // ======================================================
 
 const router = Router();
+const playlistCoverUpload = createImageUpload("playlist-covers");
 
 // ======================================================
 // ROTAS DE PLAYLISTS
@@ -184,7 +190,7 @@ router.get(
 
 router.post("/playlists", authMiddleware, async (request, response) => {
   try {
-    const { name, description, coverUrl, isPublic } = request.body;
+    const { name, description, isPublic } = request.body;
 
     const userId = request.userId!;
 
@@ -226,8 +232,6 @@ router.post("/playlists", authMiddleware, async (request, response) => {
         description:
           typeof description === "string" ? description.trim() || null : null,
 
-        coverUrl: typeof coverUrl === "string" ? coverUrl.trim() || null : null,
-
         isPublic: isPublic ?? false,
       },
 
@@ -255,21 +259,340 @@ router.post("/playlists", authMiddleware, async (request, response) => {
 });
 
 // ------------------------------------------------------
+// PATCH /playlists/:id/cover
+//
+// Atualiza a capa da playlist.
+//
+// Rota protegida.
+//
+// Somente o proprietário da playlist pode alterar
+// sua capa.
+//
+// Content-Type:
+// multipart/form-data
+//
+// Campo:
+// image
+// ------------------------------------------------------
+
+router.patch(
+  "/playlists/:id/cover",
+
+  authMiddleware,
+
+  // ----------------------------------------------------
+  // AUTORIZAÇÃO ANTES DO UPLOAD
+  // ----------------------------------------------------
+
+  async (request, response, next) => {
+    try {
+      const playlistId = Number(request.params.id);
+
+      // ------------------------------------------------
+      // Validação do ID
+      // ------------------------------------------------
+
+      if (!Number.isInteger(playlistId) || playlistId <= 0) {
+        response.status(400).json({
+          message: "ID de playlist inválido",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Busca da playlist
+      // ------------------------------------------------
+
+      const playlist = await prisma.playlist.findUnique({
+        where: {
+          id: playlistId,
+        },
+
+        select: {
+          id: true,
+          userId: true,
+        },
+      });
+
+      if (!playlist) {
+        response.status(404).json({
+          message: "Playlist não encontrada",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Autorização
+      // ------------------------------------------------
+
+      const authenticatedUserId = request.userId!;
+
+      if (playlist.userId !== authenticatedUserId) {
+        response.status(403).json({
+          message: "Você não tem permissão para alterar esta playlist",
+        });
+
+        return;
+      }
+
+      next();
+    } catch (error) {
+      console.error(error);
+
+      response.status(500).json({
+        message: "Erro interno do servidor",
+      });
+    }
+  },
+
+  // ----------------------------------------------------
+  // UPLOAD
+  // ----------------------------------------------------
+
+  playlistCoverUpload.single("image"),
+
+  // ----------------------------------------------------
+  // ATUALIZAÇÃO
+  // ----------------------------------------------------
+
+  async (request, response) => {
+    try {
+      const playlistId = Number(request.params.id);
+
+      // ------------------------------------------------
+      // Arquivo obrigatório
+      // ------------------------------------------------
+
+      if (!request.file) {
+        response.status(400).json({
+          message: "Envie uma imagem JPEG, PNG ou WEBP",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Busca a capa anterior
+      // ------------------------------------------------
+
+      const existingPlaylist = await prisma.playlist.findUnique({
+        where: {
+          id: playlistId,
+        },
+
+        select: {
+          id: true,
+          coverUrl: true,
+        },
+      });
+
+      if (!existingPlaylist) {
+        await removeUploadedFile(request.file.path);
+
+        response.status(404).json({
+          message: "Playlist não encontrada",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Nova URL
+      // ------------------------------------------------
+
+      const coverUrl = `/uploads/playlist-covers/${request.file.filename}`;
+
+      // ------------------------------------------------
+      // Atualiza banco
+      // ------------------------------------------------
+
+      const updatedPlaylist = await prisma.playlist.update({
+        where: {
+          id: playlistId,
+        },
+
+        data: {
+          coverUrl,
+        },
+
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              profileImageUrl: true,
+            },
+          },
+
+          songs: {
+            orderBy: {
+              position: "asc",
+            },
+
+            include: {
+              song: true,
+            },
+          },
+        },
+      });
+
+      // ------------------------------------------------
+      // Remove a capa anterior
+      // ------------------------------------------------
+
+      await removeLocalUploadByUrl(existingPlaylist.coverUrl);
+
+      response.json(updatedPlaylist);
+    } catch (error) {
+      // Se o arquivo foi salvo, mas o Prisma falhou,
+      // removemos a nova capa.
+
+      if (request.file) {
+        await removeUploadedFile(request.file.path);
+      }
+
+      console.error(error);
+
+      response.status(500).json({
+        message: "Erro interno do servidor",
+      });
+    }
+  },
+);
+
+// ------------------------------------------------------
+// DELETE /playlists/:id/cover
+//
+// Remove somente a capa da playlist.
+//
+// A playlist continua existindo.
+// coverUrl volta para null.
+// ------------------------------------------------------
+
+router.delete(
+  "/playlists/:id/cover",
+
+  authMiddleware,
+
+  async (request, response) => {
+    try {
+      const playlistId = Number(request.params.id);
+
+      // ------------------------------------------------
+      // Validação do ID
+      // ------------------------------------------------
+
+      if (!Number.isInteger(playlistId) || playlistId <= 0) {
+        response.status(400).json({
+          message: "ID de playlist inválido",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Busca da playlist
+      // ------------------------------------------------
+
+      const playlist = await prisma.playlist.findUnique({
+        where: {
+          id: playlistId,
+        },
+
+        select: {
+          id: true,
+          userId: true,
+          coverUrl: true,
+        },
+      });
+
+      if (!playlist) {
+        response.status(404).json({
+          message: "Playlist não encontrada",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Autorização
+      // ------------------------------------------------
+
+      const authenticatedUserId = request.userId!;
+
+      if (playlist.userId !== authenticatedUserId) {
+        response.status(403).json({
+          message: "Você não tem permissão para alterar esta playlist",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Sem capa
+      // ------------------------------------------------
+
+      if (!playlist.coverUrl) {
+        response.status(404).json({
+          message: "A playlist não possui capa",
+        });
+
+        return;
+      }
+
+      const oldCoverUrl = playlist.coverUrl;
+
+      // ------------------------------------------------
+      // Banco primeiro
+      // ------------------------------------------------
+
+      await prisma.playlist.update({
+        where: {
+          id: playlistId,
+        },
+
+        data: {
+          coverUrl: null,
+        },
+      });
+
+      // ------------------------------------------------
+      // Arquivo depois
+      // ------------------------------------------------
+
+      await removeLocalUploadByUrl(oldCoverUrl);
+
+      response.status(204).send();
+    } catch (error) {
+      console.error(error);
+
+      response.status(500).json({
+        message: "Erro interno do servidor",
+      });
+    }
+  },
+);
+
+// ------------------------------------------------------
 // PATCH /playlists/:id
 // Atualiza parcialmente uma playlist.
 //
 // Pode alterar:
 // - name
 // - description
-// - coverUrl
 // - isPublic
+//
+// A capa é alterada por:
+// PATCH /playlists/:id/cover
 // ------------------------------------------------------
 
 router.patch("/playlists/:id", authMiddleware, async (request, response) => {
   try {
     const playlistId = Number(request.params.id);
 
-    const { name, description, coverUrl, isPublic } = request.body;
+    const { name, description, isPublic } = request.body;
 
     if (!Number.isInteger(playlistId) || playlistId <= 0) {
       response.status(400).json({
@@ -282,7 +605,6 @@ router.patch("/playlists/:id", authMiddleware, async (request, response) => {
     if (
       name === undefined &&
       description === undefined &&
-      coverUrl === undefined &&
       isPublic === undefined
     ) {
       response.status(400).json({
@@ -349,22 +671,6 @@ router.patch("/playlists/:id", authMiddleware, async (request, response) => {
 
       data.description =
         description === null ? null : description.trim() || null;
-    }
-
-    // -------------------------
-    // Capa
-    // -------------------------
-
-    if (coverUrl !== undefined) {
-      if (coverUrl !== null && typeof coverUrl !== "string") {
-        response.status(400).json({
-          message: "coverUrl inválida",
-        });
-
-        return;
-      }
-
-      data.coverUrl = coverUrl === null ? null : coverUrl.trim() || null;
     }
 
     // -------------------------
@@ -470,6 +776,12 @@ router.delete("/playlists/:id", authMiddleware, async (request, response) => {
         id: playlistId,
       },
     });
+
+    // --------------------------------------------------
+    // REMOVE CAPA LOCAL
+    // --------------------------------------------------
+
+    await removeLocalUploadByUrl(playlist.coverUrl);
 
     response.status(204).send();
   } catch (error) {

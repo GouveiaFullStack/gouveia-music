@@ -5,8 +5,15 @@
 import { Router } from "express";
 
 import { authMiddleware } from "../middlewares/auth.middleware.js";
+import { createImageUpload } from "../config/upload.js";
 import { prisma } from "../lib/prisma.js";
 import { Prisma } from "../generated/prisma/client.js";
+import { parseFile } from "music-metadata";
+import { createSongPublishUpload } from "../config/upload.js";
+import {
+  removeLocalUploadByUrl,
+  removeUploadedFile,
+} from "../lib/upload-files.js";
 
 // ======================================================
 // TIPOS AUXILIARES
@@ -22,10 +29,16 @@ type SongArtistInput = {
 // ======================================================
 
 const router = Router();
+const songPublishUpload = createSongPublishUpload();
+const songCoverUpload = createImageUpload("song-covers");
 
 // ======================================================
 // ROTAS DE MÚSICAS
 // ======================================================
+
+async function removeUploadedFiles(files: Express.Multer.File[]) {
+  await Promise.all(files.map((file) => removeUploadedFile(file.path)));
+}
 
 // ------------------------------------------------------
 // GET /songs
@@ -137,6 +150,427 @@ router.get("/songs/:id", async (request, response) => {
     });
   }
 });
+
+// ======================================================
+// PUBLICAÇÃO DE MÚSICA
+// ======================================================
+//
+// POST /songs/publish
+//
+// Content-Type:
+// multipart/form-data
+//
+// Campos:
+// - title
+// - artists -> JSON
+// - audio   -> MP3 obrigatório
+// - cover   -> imagem opcional
+//
+// Exemplo de artists:
+//
+// [
+//   {
+//     "artistId": 1,
+//     "role": "main"
+//   }
+// ]
+// ======================================================
+
+router.post(
+  "/songs/publish",
+
+  authMiddleware,
+
+  // ----------------------------------------------------
+  // CONFIRMA SE O USUÁRIO POSSUI ARTIST
+  // ----------------------------------------------------
+  //
+  // Fazemos isso antes do upload para impedir que
+  // usuários comuns armazenem arquivos no servidor.
+  // ----------------------------------------------------
+
+  async (request, response, next) => {
+    try {
+      const authenticatedUserId = request.userId!;
+
+      const artist = await prisma.artist.findUnique({
+        where: {
+          userId: authenticatedUserId,
+        },
+
+        select: {
+          id: true,
+        },
+      });
+
+      if (!artist) {
+        response.status(403).json({
+          message: "Somente artistas podem publicar músicas",
+        });
+
+        return;
+      }
+
+      next();
+    } catch (error) {
+      console.error(error);
+
+      response.status(500).json({
+        message: "Erro interno do servidor",
+      });
+    }
+  },
+
+  // ----------------------------------------------------
+  // UPLOAD
+  // ----------------------------------------------------
+
+  songPublishUpload.fields([
+    {
+      name: "audio",
+      maxCount: 1,
+    },
+
+    {
+      name: "cover",
+      maxCount: 1,
+    },
+  ]),
+
+  // ----------------------------------------------------
+  // PUBLICAÇÃO
+  // ----------------------------------------------------
+
+  async (request, response) => {
+    const files = request.files as
+      | {
+          [fieldname: string]: Express.Multer.File[];
+        }
+      | undefined;
+
+    const audioFile = files?.audio?.[0];
+
+    const coverFile = files?.cover?.[0];
+
+    const uploadedFiles = [audioFile, coverFile].filter(
+      (file): file is Express.Multer.File => Boolean(file),
+    );
+
+    let songCreated = false;
+
+    try {
+      // ------------------------------------------------
+      // ÁUDIO OBRIGATÓRIO
+      // ------------------------------------------------
+
+      if (!audioFile) {
+        await removeUploadedFiles(uploadedFiles);
+
+        response.status(400).json({
+          message: "O arquivo MP3 é obrigatório",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // CAPA: MÁXIMO 5 MB
+      // ------------------------------------------------
+      //
+      // O limite geral do Multer é 50 MB por causa
+      // do áudio.
+      //
+      // Então validamos a capa separadamente.
+      // ------------------------------------------------
+
+      if (coverFile && coverFile.size > 5 * 1024 * 1024) {
+        await removeUploadedFiles(uploadedFiles);
+
+        response.status(413).json({
+          message: "A capa não pode ultrapassar 5 MB",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // TÍTULO
+      // ------------------------------------------------
+
+      const title =
+        typeof request.body.title === "string" ? request.body.title.trim() : "";
+
+      if (!title) {
+        await removeUploadedFiles(uploadedFiles);
+
+        response.status(400).json({
+          message: "O título da música é obrigatório",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // ARTISTAS
+      // ------------------------------------------------
+      //
+      // multipart/form-data envia os campos de texto
+      // como strings.
+      //
+      // Portanto artists chega como JSON em texto.
+      // ------------------------------------------------
+
+      const artistsRaw = request.body.artists;
+
+      if (typeof artistsRaw !== "string") {
+        await removeUploadedFiles(uploadedFiles);
+
+        response.status(400).json({
+          message: "Informe os artistas da música",
+        });
+
+        return;
+      }
+
+      let parsedArtists: unknown;
+
+      try {
+        parsedArtists = JSON.parse(artistsRaw);
+      } catch {
+        await removeUploadedFiles(uploadedFiles);
+
+        response.status(400).json({
+          message: "artists precisa ser um JSON válido",
+        });
+
+        return;
+      }
+
+      if (!Array.isArray(parsedArtists) || parsedArtists.length === 0) {
+        await removeUploadedFiles(uploadedFiles);
+
+        response.status(400).json({
+          message: "A música precisa possuir pelo menos um artista",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // NORMALIZAÇÃO DOS ARTISTAS
+      // ------------------------------------------------
+
+      const normalizedArtists = Array.from(
+        new Map(
+          parsedArtists.map((item: unknown) => {
+            if (typeof item !== "object" || item === null) {
+              return [
+                Number.NaN,
+
+                {
+                  artistId: Number.NaN,
+
+                  role: "",
+                },
+              ] as const;
+            }
+
+            const artist = item as {
+              artistId?: unknown;
+              role?: unknown;
+            };
+
+            const artistId = Number(artist.artistId);
+
+            const role =
+              typeof artist.role === "string" && artist.role.trim()
+                ? artist.role.trim().toLowerCase()
+                : "main";
+
+            return [
+              artistId,
+
+              {
+                artistId,
+                role,
+              },
+            ] as const;
+          }),
+        ).values(),
+      );
+
+      const artistIds = normalizedArtists.map((artist) => artist.artistId);
+
+      // ------------------------------------------------
+      // VALIDAÇÃO DOS IDs
+      // ------------------------------------------------
+
+      if (
+        artistIds.some(
+          (artistId) => !Number.isInteger(artistId) || artistId <= 0,
+        )
+      ) {
+        await removeUploadedFiles(uploadedFiles);
+
+        response.status(400).json({
+          message: "Um ou mais IDs de artistas são inválidos",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // CONFIRMA SE TODOS EXISTEM
+      // ------------------------------------------------
+
+      const existingArtists = await prisma.artist.findMany({
+        where: {
+          id: {
+            in: artistIds,
+          },
+        },
+      });
+
+      if (existingArtists.length !== artistIds.length) {
+        await removeUploadedFiles(uploadedFiles);
+
+        response.status(404).json({
+          message: "Um ou mais artistas não foram encontrados",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // AUTORIZAÇÃO
+      // ------------------------------------------------
+
+      const authenticatedUserId = request.userId!;
+
+      const authenticatedArtistIds = new Set(
+        existingArtists
+          .filter((artist) => artist.userId === authenticatedUserId)
+          .map((artist) => artist.id),
+      );
+
+      // O usuário precisa possuir pelo menos um
+      // dos artistas e ele precisa estar como main.
+
+      const authenticatedUserIsMainArtist = normalizedArtists.some(
+        (artist) =>
+          authenticatedArtistIds.has(artist.artistId) && artist.role === "main",
+      );
+
+      if (!authenticatedUserIsMainArtist) {
+        await removeUploadedFiles(uploadedFiles);
+
+        response.status(403).json({
+          message:
+            "Seu artista precisa estar relacionado como artista principal da música",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // METADADOS DO MP3
+      // ------------------------------------------------
+
+      const metadata = await parseFile(audioFile.path, {
+        duration: true,
+        skipCovers: true,
+      });
+
+      const detectedDuration = metadata.format.duration;
+
+      if (
+        detectedDuration === undefined ||
+        !Number.isFinite(detectedDuration) ||
+        detectedDuration <= 0
+      ) {
+        await removeUploadedFiles(uploadedFiles);
+
+        response.status(400).json({
+          message: "Não foi possível identificar a duração do áudio",
+        });
+
+        return;
+      }
+
+      // Song.duration é Int no Prisma.
+
+      const duration = Math.max(1, Math.round(detectedDuration));
+
+      // ------------------------------------------------
+      // URLs
+      // ------------------------------------------------
+
+      const audioUrl = `/uploads/song-audio/${audioFile.filename}`;
+
+      const coverUrl = coverFile
+        ? `/uploads/song-covers/${coverFile.filename}`
+        : null;
+
+      // ------------------------------------------------
+      // CRIAÇÃO
+      // ------------------------------------------------
+
+      const song = await prisma.song.create({
+        data: {
+          title,
+          duration,
+          audioUrl,
+          coverUrl,
+
+          artists: {
+            create: normalizedArtists.map((artist) => ({
+              role: artist.role,
+
+              artist: {
+                connect: {
+                  id: artist.artistId,
+                },
+              },
+            })),
+          },
+        },
+
+        include: {
+          artists: {
+            include: {
+              artist: true,
+            },
+          },
+
+          album: true,
+
+          genres: {
+            include: {
+              genre: true,
+            },
+          },
+        },
+      });
+
+      songCreated = true;
+
+      response.status(201).json(song);
+    } catch (error) {
+      // Se o banco ainda não criou a música,
+      // os arquivos não possuem mais utilidade.
+
+      if (!songCreated) {
+        await removeUploadedFiles(uploadedFiles);
+      }
+
+      console.error(error);
+
+      response.status(500).json({
+        message: "Erro interno do servidor",
+      });
+    }
+  },
+);
 
 // ------------------------------------------------------
 // POST /songs
@@ -358,6 +792,211 @@ router.post("/songs", authMiddleware, async (request, response) => {
     });
   }
 });
+
+// ------------------------------------------------------
+// PATCH /songs/:id/cover
+//
+// Atualiza a capa de uma música.
+//
+// Rota protegida.
+//
+// Somente um usuário proprietário de um artista
+// relacionado à música como "main" pode alterar a capa.
+//
+// Content-Type:
+// multipart/form-data
+//
+// Campo:
+// image
+// ------------------------------------------------------
+
+router.patch(
+  "/songs/:id/cover",
+
+  authMiddleware,
+
+  // ----------------------------------------------------
+  // AUTORIZAÇÃO ANTES DO UPLOAD
+  // ----------------------------------------------------
+
+  async (request, response, next) => {
+    try {
+      const songId = Number(request.params.id);
+
+      // ------------------------------------------------
+      // Validação do ID
+      // ------------------------------------------------
+
+      if (!Number.isInteger(songId) || songId <= 0) {
+        response.status(400).json({
+          message: "ID de música inválido",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Confirma se a música existe
+      // ------------------------------------------------
+
+      const song = await prisma.song.findUnique({
+        where: {
+          id: songId,
+        },
+
+        select: {
+          id: true,
+        },
+      });
+
+      if (!song) {
+        response.status(404).json({
+          message: "Música não encontrada",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Autorização
+      // ------------------------------------------------
+
+      const authenticatedUserId = request.userId!;
+
+      const mainArtist = await prisma.songArtist.findFirst({
+        where: {
+          songId,
+
+          role: "main",
+
+          artist: {
+            is: {
+              userId: authenticatedUserId,
+            },
+          },
+        },
+      });
+
+      if (!mainArtist) {
+        response.status(403).json({
+          message: "Você não tem permissão para alterar esta música",
+        });
+
+        return;
+      }
+
+      next();
+    } catch (error) {
+      console.error(error);
+
+      response.status(500).json({
+        message: "Erro interno do servidor",
+      });
+    }
+  },
+
+  // ----------------------------------------------------
+  // UPLOAD
+  // ----------------------------------------------------
+
+  songCoverUpload.single("image"),
+
+  // ----------------------------------------------------
+  // ATUALIZAÇÃO
+  // ----------------------------------------------------
+
+  async (request, response) => {
+    try {
+      const songId = Number(request.params.id);
+
+      if (!request.file) {
+        response.status(400).json({
+          message: "Envie uma imagem JPEG, PNG ou WEBP",
+        });
+
+        return;
+      }
+
+      const existingSong = await prisma.song.findUnique({
+        where: {
+          id: songId,
+        },
+
+        select: {
+          coverUrl: true,
+        },
+      });
+
+      if (!existingSong) {
+        await removeUploadedFile(request.file.path);
+
+        response.status(404).json({
+          message: "Música não encontrada",
+        });
+
+        return;
+      }
+
+      // ------------------------------------------------
+      // Caminho público da capa
+      // ------------------------------------------------
+
+      const coverUrl = `/uploads/song-covers/${request.file.filename}`;
+
+      // ------------------------------------------------
+      // Atualiza a música
+      // ------------------------------------------------
+
+      const updatedSong = await prisma.song.update({
+        where: {
+          id: songId,
+        },
+
+        data: {
+          coverUrl,
+        },
+
+        include: {
+          artists: {
+            include: {
+              artist: true,
+            },
+          },
+
+          album: true,
+
+          genres: {
+            include: {
+              genre: true,
+            },
+          },
+        },
+      });
+
+      // ------------------------------------------------
+      // Remove a capa antiga somente depois que o banco
+      // foi atualizado com sucesso.
+      // ------------------------------------------------
+
+      await removeLocalUploadByUrl(existingSong.coverUrl);
+
+      response.json(updatedSong);
+    } catch (error) {
+      // Se o upload aconteceu, mas a atualização no banco
+      // falhou, removemos a nova capa para não deixar um
+      // arquivo órfão dentro de uploads/.
+      if (request.file) {
+        await removeUploadedFile(request.file.path);
+      }
+
+      console.error(error);
+
+      response.status(500).json({
+        message: "Erro interno do servidor",
+      });
+    }
+  },
+);
 
 // ------------------------------------------------------
 // PATCH /songs/:id
@@ -682,6 +1321,21 @@ router.delete("/songs/:id", authMiddleware, async (request, response) => {
         id: songId,
       },
     });
+
+    // ------------------------------------------------
+    // REMOVE OS ARQUIVOS FÍSICOS
+    // ------------------------------------------------
+    //
+    // O registro já foi removido do banco. Agora podemos
+    // apagar com segurança o MP3 e a capa locais.
+    // URLs externas são ignoradas pela função auxiliar.
+    // ------------------------------------------------
+
+    await Promise.all([
+      removeLocalUploadByUrl(song.audioUrl),
+
+      removeLocalUploadByUrl(song.coverUrl),
+    ]);
 
     response.status(204).send();
   } catch (error) {

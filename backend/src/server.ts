@@ -3,6 +3,8 @@
 // ======================================================
 
 import express from "express";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import authRoutes from "./routes/auth.routes.js";
 import usersRoutes from "./routes/users.routes.js";
@@ -14,6 +16,9 @@ import playlistsRoutes from "./routes/playlists.routes.js";
 import favoritesRoutes from "./routes/favorites.routes.js";
 import historyRoutes from "./routes/history.routes.js";
 import followsRoutes from "./routes/follows.routes.js";
+import searchRoutes from "./routes/search.routes.js";
+import { uploadErrorMiddleware } from "./middlewares/upload-error.middleware.js";
+import uploadsRoutes from "./routes/uploads.routes.js";
 
 // ======================================================
 // CONFIGURAÇÃO DA APLICAÇÃO
@@ -23,12 +28,20 @@ const app = express();
 
 const PORT = 3000;
 
+const __filename = fileURLToPath(import.meta.url);
+
+const __dirname = path.dirname(__filename);
+
+const uploadsDirectory = path.resolve(__dirname, "../uploads");
+
 // ======================================================
 // MIDDLEWARES
 // ======================================================
 
 // Permite que o Express receba JSON no body das requisições.
 app.use(express.json());
+
+app.use("/uploads", express.static(uploadsDirectory));
 
 // ======================================================
 // ROTA PRINCIPAL
@@ -72,6 +85,14 @@ app.use(historyRoutes);
 
 // Sistema de seguidores
 app.use(followsRoutes);
+
+// Busca global
+app.use(searchRoutes);
+
+app.use(uploadErrorMiddleware);
+
+// Uploads
+app.use(uploadsRoutes);
 
 // ======================================================
 // ROTA NÃO ENCONTRADA
