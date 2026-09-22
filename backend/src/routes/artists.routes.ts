@@ -141,7 +141,7 @@ router.get("/artists/:id", async (request, response) => {
 //
 // "verified" NÃO pode ser alterado por esta rota.
 // A verificação será controlada internamente
-// pelo Gouveia Music.
+// pelo Mousiké.
 // ------------------------------------------------------
 
 router.patch("/artists/:id", authMiddleware, async (request, response) => {

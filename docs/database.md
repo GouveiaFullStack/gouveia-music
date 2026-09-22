@@ -1,4 +1,4 @@
-# Banco de Dados — Gouveia Music
+# Banco de Dados — Mousiké
 
 ## Entidades
 

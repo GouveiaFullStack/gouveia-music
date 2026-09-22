@@ -1,4 +1,4 @@
-# Gouveia Music
+# Mousiké
 
 Projeto de portfólio para desenvolvimento de uma plataforma de streaming musical, construído passo a passo com foco em aprendizado full-stack.
 
@@ -9,6 +9,7 @@ O backend está implementado e testado manualmente. O frontend ainda não foi de
 ## Tecnologias utilizadas
 
 ### Backend
+
 - Node.js
 - TypeScript
 - Express
@@ -18,6 +19,7 @@ O backend está implementado e testado manualmente. O frontend ainda não foi de
 - dotenv
 
 ### Desenvolvimento
+
 - Git e GitHub
 - VS Code
 - PowerShell
@@ -57,7 +59,7 @@ docs/
 ## Estrutura principal
 
 ```text
-gouveia-music/
+mousiké/
 ├── backend/
 │   ├── prisma/
 │   ├── src/

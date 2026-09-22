@@ -36,7 +36,7 @@ app.use(express.json());
 
 // GET /
 app.get("/", (request, response) => {
-  response.send("Gouveia Music Backend");
+  response.send("Mousiké Backend");
 });
 
 // ======================================================

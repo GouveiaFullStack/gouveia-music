@@ -128,7 +128,7 @@ router.get("/genres/:id", async (request, response) => {
 //
 // IMPORTANTE:
 // futuramente esta rota será exclusiva para
-// administradores do Gouveia Music.
+// administradores do Mousiké.
 // ------------------------------------------------------
 
 router.post("/genres", authMiddleware, async (request, response) => {
@@ -193,7 +193,7 @@ router.post("/genres", authMiddleware, async (request, response) => {
 //
 // IMPORTANTE:
 // futuramente esta rota será exclusiva para
-// administradores do Gouveia Music.
+// administradores do Mousiké.
 // ------------------------------------------------------
 
 router.patch("/genres/:id", authMiddleware, async (request, response) => {
@@ -303,7 +303,7 @@ router.patch("/genres/:id", authMiddleware, async (request, response) => {
 //
 // IMPORTANTE:
 // futuramente esta rota será exclusiva para
-// administradores do Gouveia Music.
+// administradores do Mousiké.
 // ------------------------------------------------------
 
 router.delete("/genres/:id", authMiddleware, async (request, response) => {
