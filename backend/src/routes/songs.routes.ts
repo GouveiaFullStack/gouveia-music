@@ -339,154 +339,158 @@ router.post(
         artistId: number;
         role: string;
       }[] = [];
-      const artistsRaw = request.body.artists;
 
-      if (typeof artistsRaw !== "string") {
-        await removeUploadedFiles(uploadedFiles);
+      if (existingArtist) {
+        const artistsRaw = request.body.artists;
 
-        response.status(400).json({
-          message: "Informe os artistas da música",
-        });
+        if (typeof artistsRaw !== "string") {
+          await removeUploadedFiles(uploadedFiles);
 
-        return;
-      }
+          response.status(400).json({
+            message: "Informe os artistas da música",
+          });
 
-      let parsedArtists: unknown;
+          return;
+        }
 
-      try {
-        parsedArtists = JSON.parse(artistsRaw);
-      } catch {
-        await removeUploadedFiles(uploadedFiles);
+        let parsedArtists: unknown;
 
-        response.status(400).json({
-          message: "artists precisa ser um JSON válido",
-        });
+        try {
+          parsedArtists = JSON.parse(artistsRaw);
+        } catch {
+          await removeUploadedFiles(uploadedFiles);
 
-        return;
-      }
+          response.status(400).json({
+            message: "artists precisa ser um JSON válido",
+          });
 
-      if (!Array.isArray(parsedArtists) || parsedArtists.length === 0) {
-        await removeUploadedFiles(uploadedFiles);
+          return;
+        }
 
-        response.status(400).json({
-          message: "A música precisa possuir pelo menos um artista",
-        });
+        if (!Array.isArray(parsedArtists) || parsedArtists.length === 0) {
+          await removeUploadedFiles(uploadedFiles);
 
-        return;
-      }
+          response.status(400).json({
+            message: "A música precisa possuir pelo menos um artista",
+          });
 
-      // ------------------------------------------------
-      // NORMALIZAÇÃO DOS ARTISTAS
-      // ------------------------------------------------
+          return;
+        }
 
-      normalizedArtists = Array.from(
-        new Map(
-          parsedArtists.map((item: unknown) => {
-            if (typeof item !== "object" || item === null) {
+        // ------------------------------------------------
+        // NORMALIZAÇÃO DOS ARTISTAS
+        // ------------------------------------------------
+
+        normalizedArtists = Array.from(
+          new Map(
+            parsedArtists.map((item: unknown) => {
+              if (typeof item !== "object" || item === null) {
+                return [
+                  Number.NaN,
+
+                  {
+                    artistId: Number.NaN,
+
+                    role: "",
+                  },
+                ] as const;
+              }
+
+              const artist = item as {
+                artistId?: unknown;
+                role?: unknown;
+              };
+
+              const artistId = Number(artist.artistId);
+
+              const role =
+                typeof artist.role === "string" && artist.role.trim()
+                  ? artist.role.trim().toLowerCase()
+                  : "main";
+
               return [
-                Number.NaN,
+                artistId,
 
                 {
-                  artistId: Number.NaN,
-
-                  role: "",
+                  artistId,
+                  role,
                 },
               ] as const;
-            }
+            }),
+          ).values(),
+        );
 
-            const artist = item as {
-              artistId?: unknown;
-              role?: unknown;
-            };
+        const artistIds = normalizedArtists.map((artist) => artist.artistId);
 
-            const artistId = Number(artist.artistId);
+        // ------------------------------------------------
+        // VALIDAÇÃO DOS IDs
+        // ------------------------------------------------
 
-            const role =
-              typeof artist.role === "string" && artist.role.trim()
-                ? artist.role.trim().toLowerCase()
-                : "main";
+        if (
+          artistIds.some(
+            (artistId) => !Number.isInteger(artistId) || artistId <= 0,
+          )
+        ) {
+          await removeUploadedFiles(uploadedFiles);
 
-            return [
-              artistId,
+          response.status(400).json({
+            message: "Um ou mais IDs de artistas são inválidos",
+          });
 
-              {
-                artistId,
-                role,
-              },
-            ] as const;
-          }),
-        ).values(),
-      );
+          return;
+        }
 
-      const artistIds = normalizedArtists.map((artist) => artist.artistId);
+        // ------------------------------------------------
+        // CONFIRMA SE TODOS EXISTEM
+        // ------------------------------------------------
 
-      // ------------------------------------------------
-      // VALIDAÇÃO DOS IDs
-      // ------------------------------------------------
-
-      if (
-        artistIds.some(
-          (artistId) => !Number.isInteger(artistId) || artistId <= 0,
-        )
-      ) {
-        await removeUploadedFiles(uploadedFiles);
-
-        response.status(400).json({
-          message: "Um ou mais IDs de artistas são inválidos",
-        });
-
-        return;
-      }
-
-      // ------------------------------------------------
-      // CONFIRMA SE TODOS EXISTEM
-      // ------------------------------------------------
-
-      const existingArtists = await prisma.artist.findMany({
-        where: {
-          id: {
-            in: artistIds,
+        const existingArtists = await prisma.artist.findMany({
+          where: {
+            id: {
+              in: artistIds,
+            },
           },
-        },
-      });
-
-      if (existingArtists.length !== artistIds.length) {
-        await removeUploadedFiles(uploadedFiles);
-
-        response.status(404).json({
-          message: "Um ou mais artistas não foram encontrados",
         });
 
-        return;
-      }
+        if (existingArtists.length !== artistIds.length) {
+          await removeUploadedFiles(uploadedFiles);
 
-      // ------------------------------------------------
-      // AUTORIZAÇÃO
-      // ------------------------------------------------
+          response.status(404).json({
+            message: "Um ou mais artistas não foram encontrados",
+          });
 
-      const authenticatedArtistIds = new Set(
-        existingArtists
-          .filter((artist) => artist.userId === authenticatedUserId)
-          .map((artist) => artist.id),
-      );
+          return;
+        }
 
-      // O usuário precisa possuir pelo menos um
-      // dos artistas e ele precisa estar como main.
+        // ------------------------------------------------
+        // AUTORIZAÇÃO
+        // ------------------------------------------------
 
-      const authenticatedUserIsMainArtist = normalizedArtists.some(
-        (artist) =>
-          authenticatedArtistIds.has(artist.artistId) && artist.role === "main",
-      );
+        const authenticatedArtistIds = new Set(
+          existingArtists
+            .filter((artist) => artist.userId === authenticatedUserId)
+            .map((artist) => artist.id),
+        );
 
-      if (!authenticatedUserIsMainArtist) {
-        await removeUploadedFiles(uploadedFiles);
+        // O usuário precisa possuir pelo menos um
+        // dos artistas e ele precisa estar como main.
 
-        response.status(403).json({
-          message:
-            "Seu artista precisa estar relacionado como artista principal da música",
-        });
+        const authenticatedUserIsMainArtist = normalizedArtists.some(
+          (artist) =>
+            authenticatedArtistIds.has(artist.artistId) &&
+            artist.role === "main",
+        );
 
-        return;
+        if (!authenticatedUserIsMainArtist) {
+          await removeUploadedFiles(uploadedFiles);
+
+          response.status(403).json({
+            message:
+              "Seu artista precisa estar relacionado como artista principal da música",
+          });
+
+          return;
+        }
       }
 
       // ------------------------------------------------

@@ -69,51 +69,6 @@ const allowedAudioTypes = new Map<string, string>([
   ["audio/x-mpeg", ".mp3"],
 ]);
 
-export function createAudioUpload(folder: string) {
-  const destination = path.resolve("uploads", folder);
-
-  fs.mkdirSync(destination, {
-    recursive: true,
-  });
-
-  const storage = multer.diskStorage({
-    destination: (request, file, callback) => {
-      callback(null, destination);
-    },
-
-    filename: (request, file, callback) => {
-      const extension = allowedAudioTypes.get(file.mimetype);
-
-      if (!extension) {
-        callback(new Error("Formato de áudio inválido"), "");
-
-        return;
-      }
-
-      const filename = `${randomUUID()}${extension}`;
-
-      callback(null, filename);
-    },
-  });
-
-  return multer({
-    storage,
-
-    limits: {
-      fileSize: 50 * 1024 * 1024,
-    },
-
-    fileFilter: (request, file, callback) => {
-      if (!allowedAudioTypes.has(file.mimetype)) {
-        callback(null, false);
-        return;
-      }
-
-      callback(null, true);
-    },
-  });
-}
-
 // ======================================================
 // PUBLICAÇÃO DE MÚSICA
 // ======================================================

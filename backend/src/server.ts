@@ -5,6 +5,7 @@
 import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import cors from "cors";
 
 import authRoutes from "./routes/auth.routes.js";
 import usersRoutes from "./routes/users.routes.js";
@@ -18,7 +19,6 @@ import historyRoutes from "./routes/history.routes.js";
 import followsRoutes from "./routes/follows.routes.js";
 import searchRoutes from "./routes/search.routes.js";
 import { uploadErrorMiddleware } from "./middlewares/upload-error.middleware.js";
-import uploadsRoutes from "./routes/uploads.routes.js";
 import recommendationsRoutes from "./routes/recommendations.routes.js";
 
 // ======================================================
@@ -38,6 +38,12 @@ const uploadsDirectory = path.resolve(__dirname, "../uploads");
 // ======================================================
 // MIDDLEWARES
 // ======================================================
+
+app.use(
+  cors({
+    origin: "http://localhost:5173",
+  }),
+);
 
 // Permite que o Express receba JSON no body das requisições.
 app.use(express.json());
@@ -90,10 +96,8 @@ app.use(followsRoutes);
 // Busca global
 app.use(searchRoutes);
 
+//Upload Middleware
 app.use(uploadErrorMiddleware);
-
-// Uploads
-app.use(uploadsRoutes);
 
 // Recomendações
 app.use(recommendationsRoutes);
