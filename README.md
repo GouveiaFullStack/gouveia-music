@@ -1,8 +1,34 @@
 # Mousiké
 
-Mousiké é uma plataforma de streaming musical desenvolvida como projeto de portfólio e aprendizado full-stack.
+![Status](https://img.shields.io/badge/status-Backend%20MVP%20concluído-success)
+![Node.js](https://img.shields.io/badge/Node.js-24.x-339933?logo=node.js&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-7.x-3178C6?logo=typescript&logoColor=white)
+![Express](https://img.shields.io/badge/Express-5.x-000000?logo=express&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-database-4169E1?logo=postgresql&logoColor=white)
+![Prisma](https://img.shields.io/badge/Prisma-ORM-2D3748?logo=prisma&logoColor=white)
 
-O projeto está sendo construído passo a passo, cobrindo desde modelagem de banco de dados e desenvolvimento de API até autenticação, uploads, recomendações musicais e, posteriormente, a interface frontend e o player de música.
+**Mousiké** é uma plataforma de streaming musical desenvolvida como projeto de portfólio e aprendizado full-stack.
+
+O projeto está sendo construído passo a passo, passando por modelagem de banco de dados, desenvolvimento de API, autenticação, autorização, uploads, histórico de reprodução, busca, recomendações musicais e, na próxima etapa, frontend e player de música.
+
+---
+
+## Navegação
+
+- [Status do projeto](#status-do-projeto)
+- [Funcionalidades implementadas](#funcionalidades-implementadas)
+- [Tecnologias](#tecnologias)
+- [Arquitetura do projeto](#arquitetura-do-projeto)
+- [Banco de dados](#banco-de-dados)
+- [API](#api)
+- [Uploads](#uploads)
+- [Configuração do ambiente](#configuração-do-ambiente)
+- [Executando o backend](#executando-o-backend)
+- [Scripts disponíveis](#scripts-disponíveis)
+- [Segurança](#segurança)
+- [Documentação](#documentação)
+- [Próximas etapas](#próximas-etapas)
+- [Objetivo do projeto](#objetivo-do-projeto)
 
 ---
 
@@ -10,28 +36,45 @@ O projeto está sendo construído passo a passo, cobrindo desde modelagem de ban
 
 ### Backend MVP — concluído
 
-O backend principal da Mousiké está implementado e passou por testes manuais durante o desenvolvimento.
+O Backend MVP da Mousiké está implementado e passou por testes manuais durante o desenvolvimento.
 
-Atualmente, a API já possui:
+A API atualmente possui:
 
-- autenticação;
-- autorização;
+- autenticação com JWT;
+- autorização de operações;
 - gerenciamento de usuários;
 - perfis de artistas;
 - publicação de músicas;
-- uploads de áudio e imagens;
+- upload de áudio e imagens;
 - álbuns;
 - gêneros;
-- playlists;
+- playlists públicas e privadas;
 - favoritos;
 - histórico de reprodução;
-- sistema de seguidores;
+- seguidores;
 - busca;
-- recomendações personalizadas.
+- recomendações personalizadas;
+- mixes;
+- home personalizada.
 
 ### Frontend — próxima etapa
 
-O frontend ainda será desenvolvido e integrado à API existente.
+O próximo grande marco do projeto é o desenvolvimento do frontend e sua integração com a API existente.
+
+O frontend deverá incluir:
+
+- cadastro e login;
+- home personalizada;
+- busca;
+- páginas de usuários e artistas;
+- álbuns;
+- playlists;
+- favoritos;
+- publicação de músicas;
+- recomendações;
+- player de música;
+- landing page;
+- design responsivo.
 
 ---
 
@@ -48,32 +91,50 @@ O frontend ainda será desenvolvido e integrado à API existente.
 - Alteração de senha
 - Bio de usuário
 - Upload de imagem de perfil
-- Substituição e remoção da imagem de perfil
+- Substituição de imagem
+- Remoção de imagem
+
+---
 
 ### Autenticação
 
 - Login com email e senha
-- Hash de senha com bcryptjs
+- Hash de senha com `bcryptjs`
 - Autenticação com JWT
 - Middleware de autenticação
 - Rotas protegidas
 - Identificação do usuário autenticado pelo token
-- Endpoint para consultar o usuário autenticado
+- Consulta do usuário autenticado
+- Respostas de autenticação sem exposição do hash da senha
+
+---
 
 ### Artistas
 
-O perfil de artista funciona como uma extensão da conta de usuário.
+O perfil Artist funciona como uma extensão da conta de usuário.
 
-- Um usuário pode possuir um perfil Artist
-- O perfil Artist é criado automaticamente durante a primeira publicação de música
-- Um Artist pertence a um único User
-- Gerenciamento do nome artístico
-- Bio de artista
-- Imagem de artista
-- Verificação de artista preparada no modelo
-- Controle de propriedade das operações do artista
+Um usuário não precisa criar uma conta separada para publicar músicas.
 
-A Mousiké utiliza uma única conta para usuário e artista, evitando a necessidade de criar uma conta separada.
+Recursos implementados:
+
+- perfil de artista associado a User;
+- criação automática do Artist na primeira publicação;
+- nome artístico;
+- bio;
+- imagem;
+- campo de verificação;
+- associação com músicas;
+- associação com álbuns;
+- seguidores;
+- autorização baseada no proprietário da conta.
+
+A relação principal é:
+
+```text
+User 1 ───── 0..1 Artist
+```
+
+---
 
 ### Músicas
 
@@ -82,44 +143,54 @@ A Mousiké utiliza uma única conta para usuário e artista, evitando a necessid
 - Upload opcional de capa
 - Detecção automática da duração do áudio
 - Associação de múltiplos artistas
-- Definição de papéis dos artistas na música
-- Artista principal com role `main`
-- Consulta pública de músicas
-- Consulta individual de música
+- Papéis dos artistas na música
+- Identificação do artista principal por `role = "main"`
+- Consulta pública
+- Consulta individual
 - Alteração do título
-- Alteração e remoção de capa
-- Exclusão protegida da música
-- Limpeza automática dos arquivos locais ao remover conteúdo
+- Alteração de capa
+- Remoção de capa
+- Exclusão protegida
+- Limpeza automática de arquivos locais
 
-Na primeira publicação, caso o usuário ainda não possua um perfil Artist, o backend cria automaticamente:
+Na primeira publicação, caso o usuário ainda não possua um Artist, o backend cria automaticamente:
 
 1. o perfil Artist;
 2. a música;
 3. a relação entre música e artista principal.
 
-Tudo ocorre dentro da mesma operação de publicação.
+A operação é realizada como parte do mesmo fluxo de publicação.
+
+---
 
 ### Álbuns
 
 - Criação de álbuns
-- Associação de múltiplos artistas
-- Associação de músicas
-- Data de lançamento
-- Upload de capa
-- Substituição e remoção de capa
-- Consulta de álbuns
+- Consulta
 - Edição protegida
 - Exclusão protegida
+- Associação de múltiplos artistas
+- Associação e remoção de músicas
+- Data de lançamento
+- Upload de capa
+- Substituição de capa
+- Remoção de capa
 
-Uma música pode existir sem pertencer a um álbum.
+Uma música pode existir sem pertencer a um álbum, permitindo publicação de singles.
+
+---
 
 ### Gêneros
 
-- Criação de gêneros
-- Consulta de gêneros
-- Associação de músicas a múltiplos gêneros
-- Edição de gêneros
-- Exclusão de gêneros
+- Criação
+- Consulta
+- Edição
+- Exclusão
+- Associação de múltiplos gêneros a uma música
+
+A relação entre músicas e gêneros é N:N.
+
+---
 
 ### Playlists
 
@@ -131,10 +202,13 @@ Uma música pode existir sem pertencer a um álbum.
 - Imagem de capa
 - Adição de músicas
 - Remoção de músicas
-- Ordenação das músicas
+- Ordenação
 - Controle de posição
-- Proteção das playlists privadas
-- Alteração e exclusão somente pelo proprietário
+- Controle de acesso às playlists privadas
+- Edição somente pelo proprietário
+- Exclusão somente pelo proprietário
+
+---
 
 ### Favoritos
 
@@ -143,18 +217,28 @@ Uma música pode existir sem pertencer a um álbum.
 - Listar favoritos do usuário
 - Impedir favorito duplicado da mesma música pelo mesmo usuário
 
+---
+
 ### Histórico de reprodução
 
-O histórico é utilizado como uma das bases do sistema de recomendações.
+O histórico é uma das principais fontes de informação utilizadas pelo sistema de recomendações.
 
-Uma reprodução é registrada somente depois que o usuário escuta pelo menos **25% da duração da música**.
+Uma reprodução é registrada somente quando o usuário escuta pelo menos:
 
-O histórico armazena informações como:
+```text
+25% da duração da música
+```
+
+Cada registro armazena:
 
 - usuário;
 - música;
-- segundos escutados;
+- segundos reproduzidos;
 - momento da reprodução.
+
+O histórico poderá futuramente ser utilizado também para retrospectivas e estatísticas pessoais.
+
+---
 
 ### Sistema de seguidores
 
@@ -165,7 +249,9 @@ Usuários podem:
 - seguir outros usuários;
 - deixar de seguir outros usuários.
 
-O sistema impede que um usuário siga a própria conta.
+O backend impede que um usuário siga a própria conta.
+
+---
 
 ### Busca
 
@@ -175,24 +261,27 @@ A Mousiké possui busca global por:
 - artistas;
 - álbuns.
 
-A busca também considera artistas relacionados às músicas.
+A pesquisa de músicas também considera artistas relacionados.
+
+---
 
 ### Recomendações
 
-O backend possui um sistema próprio de recomendações musicais.
+O backend possui um sistema próprio de recomendações.
 
-As recomendações utilizam sinais como:
+Os principais sinais utilizados atualmente incluem:
 
 - histórico de reprodução;
 - recência das reproduções;
+- repetição de músicas;
 - músicas favoritas;
 - artistas seguidos;
-- artistas das músicas;
+- artistas relacionados;
 - gêneros musicais.
 
-O sistema também possui controle de repetição para evitar excesso de músicas do mesmo artista.
+O algoritmo também utiliza regras de diversidade para reduzir excesso de músicas do mesmo artista.
 
-Entre os recursos disponíveis estão:
+Recursos existentes:
 
 - recomendações personalizadas;
 - músicas semelhantes;
@@ -204,23 +293,26 @@ Entre os recursos disponíveis estão:
 
 ---
 
-## Tecnologias utilizadas
+## Tecnologias
 
 ### Backend
 
-- Node.js
-- TypeScript
-- Express
-- PostgreSQL
-- Prisma ORM
-- Prisma PostgreSQL Adapter
-- JWT
-- bcryptjs
-- Multer
-- music-metadata
-- CORS
-- dotenv
-- pg
+| Tecnologia                | Uso                                    |
+| ------------------------- | -------------------------------------- |
+| Node.js                   | Runtime JavaScript                     |
+| TypeScript                | Tipagem e desenvolvimento              |
+| Express                   | API HTTP                               |
+| PostgreSQL                | Banco de dados                         |
+| Prisma ORM                | Modelagem e acesso aos dados           |
+| Prisma PostgreSQL Adapter | Integração Prisma/PostgreSQL           |
+| JWT                       | Autenticação                           |
+| bcryptjs                  | Hash de senhas                         |
+| Multer                    | Upload de arquivos                     |
+| music-metadata            | Leitura de metadados MP3               |
+| CORS                      | Integração entre frontend e backend    |
+| dotenv                    | Variáveis de ambiente                  |
+| pg                        | Driver PostgreSQL                      |
+| tsx                       | Execução TypeScript em desenvolvimento |
 
 ### Desenvolvimento
 
@@ -229,11 +321,10 @@ Entre os recursos disponíveis estão:
 - Git
 - GitHub
 - npm
-- tsx
 
 ---
 
-## Estrutura do projeto
+## Arquitetura do projeto
 
 ```text
 mousike/
@@ -284,15 +375,23 @@ mousike/
 │   └── tsconfig.json
 │
 ├── docs/
+│   ├── README.md
 │   ├── database.md
-│   ├── Mousiké -- Documentação.pdf
-│   └── Mousiké — Documentação Técnica do Projeto.docx
+│   │
+│   ├── technical/
+│   │   ├── Mousike_Documentacao_Tecnica.docx
+│   │   └── Mousike_Documentacao_Tecnica.pdf
+│   │
+│   └── changelog/
+│       └── 2026-09-22-backend-mvp/
+│           ├── Mousike_Relatorio_Evolucao_2026-09-22.docx
+│           └── Mousike_Relatorio_Evolucao_2026-09-22.pdf
 │
 ├── .gitignore
 └── README.md
 ```
 
-Os arquivos enviados pelos usuários ficam localmente em:
+Os arquivos enviados pelos usuários são armazenados localmente em:
 
 ```text
 backend/uploads/
@@ -318,7 +417,7 @@ As migrations estão em:
 backend/prisma/migrations/
 ```
 
-### Principais entidades
+### Entidades principais
 
 - User
 - Artist
@@ -329,7 +428,7 @@ backend/prisma/migrations/
 - Favorite
 - ListeningHistory
 
-### Tabelas de relacionamento
+### Models de relacionamento
 
 - SongArtist
 - SongGenre
@@ -337,6 +436,74 @@ backend/prisma/migrations/
 - PlaylistSong
 - UserArtistFollow
 - UserFollow
+
+Para detalhes da modelagem:
+
+[`docs/database.md`](./docs/database.md)
+
+---
+
+## API
+
+A API segue uma organização por domínio.
+
+Principais grupos de rotas:
+
+```text
+/auth
+/users
+/artists
+/songs
+/albums
+/genres
+/playlists
+/favorites
+/history
+/search
+/recommendations
+/mixes
+/home
+```
+
+Existem rotas públicas e protegidas.
+
+Operações que dependem da identidade do usuário utilizam JWT e middleware de autenticação.
+
+Operações de alteração também possuem regras de autorização para validar se o recurso realmente pertence ao usuário autenticado.
+
+---
+
+## Uploads
+
+O backend utiliza Multer para receber arquivos.
+
+### Imagens aceitas
+
+```text
+JPEG
+PNG
+WEBP
+```
+
+### Áudio aceito
+
+```text
+MP3
+```
+
+### Estrutura local
+
+```text
+backend/uploads/
+├── profile-images/
+├── artist-images/
+├── song-covers/
+├── album-covers/
+├── playlist-covers/
+└── song-audio/
+```
+
+O backend também realiza limpeza de arquivos quando imagens ou músicas são substituídas ou removidas, reduzindo arquivos órfãos.
 
 ---
 
@@ -354,20 +521,20 @@ Instale as dependências:
 npm install
 ```
 
-Crie o arquivo:
+Crie:
 
 ```text
 backend/.env
 ```
 
-Com as variáveis:
+Adicione:
 
 ```env
 DATABASE_URL="sua_url_do_postgresql"
 JWT_SECRET="sua_chave_secreta"
 ```
 
-Não envie o arquivo `.env` para o GitHub.
+Nunca envie valores reais dessas variáveis para o GitHub.
 
 ---
 
@@ -397,19 +564,24 @@ npx prisma migrate dev
 
 ### Desenvolvimento
 
-O projeto utiliza `tsx watch`, que reinicia automaticamente o servidor após alterações nos arquivos TypeScript.
-
 ```powershell
+cd backend
 npm run dev
 ```
 
-Por padrão, o servidor fica disponível em:
+O projeto utiliza `tsx watch`, portanto o servidor reinicia automaticamente quando os arquivos TypeScript são alterados.
+
+Por padrão:
 
 ```text
+Backend
 http://localhost:3000
+
+Frontend local previsto
+http://localhost:5173
 ```
 
-### Verificação de tipos
+### Verificar tipos
 
 ```powershell
 npm run typecheck
@@ -421,13 +593,13 @@ npm run typecheck
 npm run build
 ```
 
-O código compilado é gerado em:
+Os arquivos compilados são gerados em:
 
 ```text
 backend/dist/
 ```
 
-### Executar o build
+### Executar build
 
 ```powershell
 npm start
@@ -437,206 +609,216 @@ npm start
 
 ## Scripts disponíveis
 
-```text
-npm run dev
-```
-
-Executa o backend em modo de desenvolvimento com reinicialização automática.
-
-```text
-npm run typecheck
-```
-
-Verifica erros de TypeScript sem gerar o build.
-
-```text
-npm run build
-```
-
-Compila o backend TypeScript.
-
-```text
-npm start
-```
-
-Executa a versão compilada do backend.
-
-```text
-npm run prisma:validate
-```
-
-Valida o schema Prisma.
-
-```text
-npm run prisma:generate
-```
-
-Gera o Prisma Client.
-
----
-
-## API
-
-A API está organizada por domínio.
-
-Principais grupos de rotas:
-
-```text
-/auth
-/users
-/artists
-/songs
-/albums
-/genres
-/playlists
-/favorites
-/history
-/search
-/recommendations
-/mixes
-/home
-```
-
-Algumas rotas são públicas, enquanto operações que modificam dados utilizam autenticação JWT e regras de autorização.
-
----
-
-## Uploads
-
-O backend utiliza Multer para recebimento dos arquivos.
-
-Formatos de imagem aceitos:
-
-```text
-JPEG
-PNG
-WEBP
-```
-
-Áudio aceito:
-
-```text
-MP3
-```
-
-Os uploads são organizados em diretórios separados:
-
-```text
-backend/uploads/
-├── profile-images/
-├── artist-images/
-├── song-covers/
-├── album-covers/
-├── playlist-covers/
-└── song-audio/
-```
-
-O backend também realiza limpeza de arquivos quando imagens ou músicas são substituídas ou removidas, reduzindo a criação de arquivos órfãos.
+| Comando                   | Função                                 |
+| ------------------------- | -------------------------------------- |
+| `npm run dev`             | Executa o backend em desenvolvimento   |
+| `npm run typecheck`       | Valida o TypeScript sem gerar arquivos |
+| `npm run build`           | Compila o backend                      |
+| `npm start`               | Executa o build compilado              |
+| `npm run prisma:validate` | Valida o schema Prisma                 |
+| `npm run prisma:generate` | Gera o Prisma Client                   |
 
 ---
 
 ## CORS
 
-Durante o desenvolvimento, o backend está preparado para receber requisições do frontend local em:
+Durante o desenvolvimento, a API aceita requisições do frontend local em:
 
 ```text
 http://localhost:5173
 ```
 
-O backend roda em:
+O backend utiliza:
 
 ```text
 http://localhost:3000
 ```
 
+Atualmente a autenticação utiliza Bearer Token JWT, sem autenticação baseada em cookies.
+
 ---
 
 ## Segurança
 
-Alguns cuidados já implementados:
+Cuidados já implementados:
 
 - senhas armazenadas com hash;
-- JWT para autenticação;
-- rotas protegidas por middleware;
+- autenticação JWT;
+- middleware para rotas protegidas;
 - autorização baseada no usuário autenticado;
-- proteção de operações de artistas;
+- proteção das operações de artistas;
 - proteção de playlists privadas;
 - validação de propriedade antes de alterações;
-- `.env` ignorado pelo Git;
-- uploads ignorados pelo Git;
-- Prisma Client gerado ignorado pelo Git;
-- proteção contra remoção de arquivos fora do diretório de uploads.
+- variáveis de ambiente fora do Git;
+- diretório de uploads fora do Git;
+- Prisma Client gerado fora do Git;
+- proteção contra remoção de arquivos fora da área de uploads;
+- respostas de login sem exposição do hash da senha.
 
-Recursos adicionais de produção, como rate limiting, refresh tokens, políticas avançadas de segurança e observabilidade, poderão ser adicionados posteriormente.
+Melhorias que poderão ser implementadas posteriormente:
+
+- refresh tokens;
+- revogação de sessão;
+- rate limiting;
+- Helmet;
+- validação estruturada de payloads;
+- observabilidade;
+- armazenamento externo de mídia;
+- configuração de produção para CORS.
 
 ---
 
 ## Documentação
 
-A documentação complementar do projeto está disponível na pasta:
+A documentação da Mousiké está organizada em:
 
-```text
-docs/
-```
+[`docs/`](./docs/)
 
-Ela inclui documentação sobre:
+### Índice da documentação
 
-- modelagem do banco de dados;
-- decisões de arquitetura;
-- evolução do projeto;
-- regras de domínio.
+[`docs/README.md`](./docs/README.md)
 
-A documentação será atualizada conforme novos marcos do projeto forem concluídos.
+Esse arquivo funciona como ponto de entrada para a documentação do projeto.
+
+### Banco de dados
+
+[`docs/database.md`](./docs/database.md)
+
+Contém:
+
+- entidades;
+- relacionamentos;
+- cardinalidades;
+- constraints;
+- índices;
+- regras de exclusão;
+- decisões de modelagem;
+- regras de domínio relacionadas aos dados.
+
+### Documentação técnica
+
+Disponível em:
+
+[`docs/technical/`](./docs/technical/)
+
+Arquivos:
+
+- [`Mousike_Documentacao_Tecnica.pdf`](./docs/technical/Mousike_Documentacao_Tecnica.pdf)
+- [`Mousike_Documentacao_Tecnica.docx`](./docs/technical/Mousike_Documentacao_Tecnica.docx)
+
+### Histórico de evolução
+
+Os registros dos principais marcos ficam em:
+
+[`docs/changelog/`](./docs/changelog/)
+
+Primeiro marco documentado:
+
+**22 de setembro de 2026 — conclusão do Backend MVP**
+
+[`docs/changelog/2026-09-22-backend-mvp/`](./docs/changelog/2026-09-22-backend-mvp/)
 
 ---
 
 ## Próximas etapas
 
-Com o Backend MVP concluído, o próximo grande marco da Mousiké é o frontend.
+Com o Backend MVP concluído, o desenvolvimento seguirá para o frontend.
 
-Planejamento atual:
+### Estrutura inicial
 
-- criar a estrutura do frontend;
-- criar sistema visual da Mousiké;
-- implementar cadastro e login;
-- integrar autenticação com a API;
-- implementar a home personalizada;
-- criar busca de músicas, artistas e álbuns;
-- desenvolver páginas de usuário;
-- desenvolver páginas de artista;
-- desenvolver páginas de álbuns;
-- desenvolver playlists;
-- criar fluxo de publicação de músicas;
-- desenvolver o player de música;
-- integrar favoritos;
-- integrar histórico de reprodução;
-- integrar sistema de seguidores;
-- integrar recomendações;
-- adicionar animações à landing page;
-- criar design responsivo;
-- adicionar testes automatizados;
-- preparar aplicação para deploy.
+- criar o projeto frontend;
+- definir organização de pastas;
+- configurar comunicação com a API;
+- preparar variáveis de ambiente;
+- criar estrutura visual base.
+
+### Autenticação
+
+- cadastro;
+- login;
+- armazenamento da sessão;
+- rotas protegidas;
+- logout;
+- carregamento do usuário autenticado.
+
+### Experiência musical
+
+- home personalizada;
+- busca;
+- músicas;
+- artistas;
+- álbuns;
+- playlists;
+- favoritos;
+- histórico;
+- recomendações.
+
+### Player
+
+- reprodução;
+- pausa;
+- progresso;
+- duração;
+- volume;
+- próxima música;
+- música anterior;
+- fila de reprodução.
+
+### Perfis e publicação
+
+- página de usuário;
+- página de artista;
+- seguidores;
+- publicação de músicas;
+- capas;
+- gerenciamento do conteúdo publicado.
+
+### Interface
+
+- landing page;
+- animações;
+- responsividade;
+- estados de carregamento;
+- tratamento visual de erros;
+- feedback de ações.
+
+### Etapas futuras
+
+- testes automatizados;
+- melhorias de segurança;
+- armazenamento de mídia em serviço externo;
+- deploy;
+- observabilidade;
+- otimização do sistema de recomendações.
 
 ---
 
 ## Objetivo do projeto
 
-A Mousiké foi criada principalmente como projeto de aprendizado e portfólio.
+A Mousiké nasceu como um projeto de aprendizado e portfólio.
 
-O objetivo é desenvolver uma aplicação full-stack completa, entendendo na prática conceitos como:
+O objetivo é construir uma aplicação full-stack completa e compreender, na prática, conceitos como:
 
 - APIs REST;
+- Node.js;
+- TypeScript;
+- Express;
+- PostgreSQL;
+- Prisma;
 - bancos de dados relacionais;
 - modelagem de dados;
+- relacionamentos N:N;
 - autenticação;
 - autorização;
-- uploads;
-- manipulação de arquivos;
-- relacionamentos N:N;
-- TypeScript;
-- arquitetura backend;
+- JWT;
+- upload de arquivos;
+- manipulação de mídia;
+- regras de negócio;
 - sistemas de recomendação;
+- arquitetura backend;
 - integração frontend/backend;
-- controle de versão com Git.
+- Git;
+- GitHub;
+- organização e documentação de projetos.
 
-O projeto continuará evoluindo conforme novas etapas forem desenvolvidas.
+A aplicação continuará evoluindo por etapas, mantendo o histórico das principais decisões e marcos do desenvolvimento na documentação do repositório.
